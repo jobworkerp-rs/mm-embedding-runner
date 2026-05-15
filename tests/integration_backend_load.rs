@@ -33,7 +33,7 @@ fn default_settings() -> ValidatedSettings {
 fn full_load_succeeds() {
     let backend = MmBackend::load(default_settings()).expect("model should load");
     let vectors = backend
-        .embed_texts(&[String::from("hello")])
+        .embed_texts(&["hello"])
         .expect("embed_texts should succeed");
     assert_eq!(vectors.len(), 1);
     // Qwen3-VL-Embedding-2B has 2048-dim output (specification.md §2.2).

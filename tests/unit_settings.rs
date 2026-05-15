@@ -3,8 +3,8 @@ use mm_embedding_runner::protobuf::mm_embedding::{
     MultimodalEmbeddingRunnerSettings,
 };
 use mm_embedding_runner::settings::{
-    DTypeKind, DecodedImageBytesLimit, DeviceKind, default_image_size_limit_bytes,
-    default_max_decoded_image_bytes, max_seq_len_max, max_seq_len_min, validate,
+    DEFAULT_IMAGE_SIZE_LIMIT_BYTES, DEFAULT_MAX_DECODED_IMAGE_BYTES, DTypeKind,
+    DecodedImageBytesLimit, DeviceKind, MAX_SEQ_LEN_MAX, MAX_SEQ_LEN_MIN, validate,
 };
 
 fn base_settings() -> MultimodalEmbeddingRunnerSettings {
@@ -26,11 +26,11 @@ fn base_settings() -> MultimodalEmbeddingRunnerSettings {
 fn default_settings_resolve_to_defaults() {
     let v = validate(base_settings()).unwrap();
     assert_eq!(v.max_sequence_length, 2048);
-    assert_eq!(v.image_size_limit_bytes, default_image_size_limit_bytes());
+    assert_eq!(v.image_size_limit_bytes, DEFAULT_IMAGE_SIZE_LIMIT_BYTES);
     assert_eq!(v.max_decoded_image_bytes, DecodedImageBytesLimit::Default);
     assert_eq!(
         v.max_decoded_image_bytes.effective_bytes(),
-        Some(default_max_decoded_image_bytes())
+        Some(DEFAULT_MAX_DECODED_IMAGE_BYTES)
     );
     assert_eq!(v.device, DeviceKind::Cpu);
     assert_eq!(v.dtype, DTypeKind::F32);
@@ -74,18 +74,18 @@ fn max_sequence_length_above_maximum_is_rejected() {
 #[test]
 fn max_sequence_length_boundary_min_is_accepted() {
     let mut s = base_settings();
-    s.max_sequence_length = max_seq_len_min();
+    s.max_sequence_length = MAX_SEQ_LEN_MIN;
     let v = validate(s).unwrap();
-    assert_eq!(v.max_sequence_length, max_seq_len_min());
-    assert_eq!(v.chunking_config.max_chunk_tokens, max_seq_len_min());
+    assert_eq!(v.max_sequence_length, MAX_SEQ_LEN_MIN);
+    assert_eq!(v.chunking_config.max_chunk_tokens, MAX_SEQ_LEN_MIN);
 }
 
 #[test]
 fn max_sequence_length_boundary_max_is_accepted() {
     let mut s = base_settings();
-    s.max_sequence_length = max_seq_len_max();
+    s.max_sequence_length = MAX_SEQ_LEN_MAX;
     let v = validate(s).unwrap();
-    assert_eq!(v.max_sequence_length, max_seq_len_max());
+    assert_eq!(v.max_sequence_length, MAX_SEQ_LEN_MAX);
 }
 
 #[test]

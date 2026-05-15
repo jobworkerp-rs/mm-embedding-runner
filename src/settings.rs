@@ -13,10 +13,10 @@ use crate::protobuf::mm_embedding::{
     MultimodalEmbeddingRunnerSettings,
 };
 
-const MAX_SEQ_LEN_MIN: u32 = 16;
-const MAX_SEQ_LEN_MAX: u32 = 32_768;
-const DEFAULT_IMAGE_SIZE_LIMIT_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
-const DEFAULT_MAX_DECODED_IMAGE_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB
+pub const MAX_SEQ_LEN_MIN: u32 = 16;
+pub const MAX_SEQ_LEN_MAX: u32 = 32_768;
+pub const DEFAULT_IMAGE_SIZE_LIMIT_BYTES: u64 = 10 * 1024 * 1024;
+pub const DEFAULT_MAX_DECODED_IMAGE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Tri-state representation of `max_decoded_image_bytes` (specification.md §3.3 / §3.5):
 /// - `Default` = field unset on the wire => apply 256 MiB cap
@@ -202,18 +202,4 @@ fn canonicalize_allowed_dirs(raw: &[String]) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(out)
-}
-
-// Public re-exports of bounds used by tests/unit_settings.rs.
-pub const fn max_seq_len_min() -> u32 {
-    MAX_SEQ_LEN_MIN
-}
-pub const fn max_seq_len_max() -> u32 {
-    MAX_SEQ_LEN_MAX
-}
-pub const fn default_image_size_limit_bytes() -> u64 {
-    DEFAULT_IMAGE_SIZE_LIMIT_BYTES
-}
-pub const fn default_max_decoded_image_bytes() -> u64 {
-    DEFAULT_MAX_DECODED_IMAGE_BYTES
 }

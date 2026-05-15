@@ -2,46 +2,26 @@
 //! `integration_embed_text.rs` in shape: share a single loaded plugin
 //! across tests, verify spec contract on the result protobuf.
 
+mod common;
+
+use common::{FIXTURES, assert_unit_norm, load_test_plugin};
 use jobworkerp_client::plugins::MultiMethodPluginRunner;
 use mm_embedding_runner::protobuf::mm_embedding::{
-    Device, EmbedImageArgs, ImageItem, MmEmbeddingResult, MultimodalEmbeddingRunnerSettings,
-    image_item::Source as ImageSource,
+    EmbedImageArgs, ImageItem, MmEmbeddingResult, image_item::Source as ImageSource,
 };
 use mm_embedding_runner::{METHOD_EMBED_IMAGE, MmEmbeddingPlugin};
 use prost::Message;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
-fn test_device() -> i32 {
-    match std::env::var("MM_TEST_DEVICE").as_deref() {
-        Ok("cpu") => Device::Cpu as i32,
-        Ok("metal") => Device::Metal as i32,
-        _ => Device::Cuda as i32,
-    }
-}
+static LOADED_PLUGIN: OnceLock<Mutex<MmEmbeddingPlugin>> = OnceLock::new();
 
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
-
-static LOADED_PLUGIN: OnceLock<std::sync::Mutex<MmEmbeddingPlugin>> = OnceLock::new();
-
-fn shared_plugin() -> std::sync::MutexGuard<'static, MmEmbeddingPlugin> {
+fn shared_plugin() -> MutexGuard<'static, MmEmbeddingPlugin> {
     LOADED_PLUGIN
         .get_or_init(|| {
-            let mut plugin = MmEmbeddingPlugin::new();
-            let fixtures_path = PathBuf::from(FIXTURES);
-            // For file_path tests we need the fixtures dir explicitly listed.
-            let settings = MultimodalEmbeddingRunnerSettings {
-                model_id: "Qwen/Qwen3-VL-Embedding-2B".to_string(),
-                max_sequence_length: 512,
-                device: test_device(),
-                allowed_image_dirs: vec![fixtures_path.to_string_lossy().into_owned()],
-                ..Default::default()
-            };
-            plugin
-                .load(settings.encode_to_vec())
-                .expect("model should load for integration tests");
-            std::sync::Mutex::new(plugin)
+            // file_path tests need the fixtures dir explicitly whitelisted.
+            Mutex::new(load_test_plugin(vec![FIXTURES.to_string()]))
         })
         .lock()
         .unwrap()
@@ -60,14 +40,6 @@ fn run_embed_image(plugin: &mut MmEmbeddingPlugin, items: Vec<ImageItem>) -> MmE
     let (result, _meta) = plugin.run(args, HashMap::new(), Some(METHOD_EMBED_IMAGE));
     let bytes = result.expect("embed_image should succeed");
     MmEmbeddingResult::decode(&bytes[..]).unwrap()
-}
-
-fn assert_unit_norm(values: &[f32]) {
-    let norm_sq: f32 = values.iter().map(|v| v * v).sum();
-    assert!(
-        (norm_sq - 1.0).abs() < 1e-3,
-        "expected unit-norm embedding, got norm_sq={norm_sq}",
-    );
 }
 
 #[test]

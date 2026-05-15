@@ -3,50 +3,24 @@
 //! the spec contract: char-indexed positions, L2-normalized vectors, and
 //! sane chunking behavior for long inputs.
 
+mod common;
+
+use common::{FIXTURES, assert_unit_norm, load_test_plugin};
 use jobworkerp_client::plugins::MultiMethodPluginRunner;
-use mm_embedding_runner::protobuf::mm_embedding::{
-    Device, EmbedTextArgs, MmEmbeddingResult, MultimodalEmbeddingRunnerSettings,
-};
+use mm_embedding_runner::protobuf::mm_embedding::{EmbedTextArgs, MmEmbeddingResult};
 use mm_embedding_runner::{METHOD_EMBED_TEXT, MmEmbeddingPlugin};
 use prost::Message;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
-// CPU inference of Qwen3-VL-Embedding-2B is impractically slow (hours per
-// embed). Default these expensive tests to CUDA; override with
-// MM_TEST_DEVICE=cpu to force CPU. Requires the crate to be built with
-// --features cuda when using the default.
-fn test_device() -> i32 {
-    match std::env::var("MM_TEST_DEVICE").as_deref() {
-        Ok("cpu") => Device::Cpu as i32,
-        Ok("metal") => Device::Metal as i32,
-        _ => Device::Cuda as i32,
-    }
-}
+static LOADED_PLUGIN: OnceLock<Mutex<MmEmbeddingPlugin>> = OnceLock::new();
 
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
-
-static LOADED_PLUGIN: OnceLock<std::sync::Mutex<MmEmbeddingPlugin>> = OnceLock::new();
-
-// Share a single loaded plugin across the integration tests in this file so
-// the multi-gig model download/init only happens once per `cargo test`
-// invocation (specification.md §4.6: serial execution is fine for v0.1).
-fn shared_plugin() -> std::sync::MutexGuard<'static, MmEmbeddingPlugin> {
+// One loaded plugin per `cargo test` invocation so the multi-gig model
+// init runs once (specification.md §4.6: serial execution is fine for v0.1).
+fn shared_plugin() -> MutexGuard<'static, MmEmbeddingPlugin> {
     LOADED_PLUGIN
-        .get_or_init(|| {
-            let mut plugin = MmEmbeddingPlugin::new();
-            let settings = MultimodalEmbeddingRunnerSettings {
-                model_id: "Qwen/Qwen3-VL-Embedding-2B".to_string(),
-                max_sequence_length: 512,
-                device: test_device(),
-                ..Default::default()
-            };
-            plugin
-                .load(settings.encode_to_vec())
-                .expect("model should load for integration tests");
-            std::sync::Mutex::new(plugin)
-        })
+        .get_or_init(|| Mutex::new(load_test_plugin(vec![])))
         .lock()
         .unwrap()
 }
@@ -59,14 +33,6 @@ fn run_embed_text(plugin: &mut MmEmbeddingPlugin, text: &str) -> MmEmbeddingResu
     let (result, _meta) = plugin.run(args, HashMap::new(), Some(METHOD_EMBED_TEXT));
     let bytes = result.expect("embed_text should succeed");
     MmEmbeddingResult::decode(&bytes[..]).unwrap()
-}
-
-fn assert_unit_norm(values: &[f32]) {
-    let norm_sq: f32 = values.iter().map(|v| v * v).sum();
-    assert!(
-        (norm_sq - 1.0).abs() < 1e-3,
-        "expected unit-norm embedding, got norm_sq={norm_sq}",
-    );
 }
 
 #[test]

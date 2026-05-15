@@ -1,19 +1,10 @@
 //! Adapter for `command_utils::text::chunking::HierarchicalChunker`.
 //!
-//! We provide a `TokenProvider` impl that wraps `TokenizationProcessor`, then
-//! map the resulting `HierarchicalChunk` values into a simpler
-//! `EmbeddingChunk` representation that downstream code (P4-3) feeds into
-//! `Qwen3VLEmbedding::embed_texts` in batched form.
-//!
-//! The chunker itself enforces:
-//! - Paragraph- and sentence-aware splitting prioritized over forced splits.
-//! - `max_chunk_tokens` and `min_chunk_tokens` from the resolved settings.
-//!
 //! Conventions (specification.md §3.6.1):
-//! - `char_start` / `char_end` are **char indices** (Unicode scalar values).
+//! - `char_start` / `char_end` are char indices (Unicode scalar values).
 //! - `content` always equals `text.chars().skip(char_start).take(char_end - char_start).collect()`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use command_utils::text::chunking::{
     FallbackStrategy, HierarchicalChunker, HierarchicalChunkingConfig, TokenProvider,
@@ -21,7 +12,7 @@ use command_utils::text::chunking::{
 
 use crate::error::{MmEmbeddingError, Result};
 use crate::settings::ResolvedChunkingConfig;
-use crate::tokenization::TokenizationProcessor;
+use crate::tokenization::{TokenizationOutput, TokenizationProcessor};
 
 #[derive(Debug, Clone)]
 pub struct EmbeddingChunk {
@@ -31,18 +22,39 @@ pub struct EmbeddingChunk {
     pub tokens: Vec<u32>,
 }
 
-/// Bridge between `TokenizationProcessor` (our owned tokenizer) and the
-/// chunker's expected `TokenProvider` interface. `Arc` so multiple chunker
-/// instances over the same tokenizer (e.g. cross-test reuse) share state
-/// without cloning the underlying tokenizers::Tokenizer.
+/// Bridge between `TokenizationProcessor` and the chunker's `TokenProvider`.
+///
+/// The chunker calls `get_token_spans` / `tokenize` / `estimate_token_count`
+/// against the *same* full text several times within one `chunk_efficiently`
+/// run. Tokenizing the whole input on every call would re-run a O(N) native
+/// encode pass each time, so the last `(text, output)` pair is memoized.
+/// command-utils' own `TokenizationCache` only covers `tokenize` /
+/// `estimate_token_count`, not the span path, which is why the memo lives
+/// here. `Mutex` because `TokenProvider: Send + Sync`.
 pub struct TokenizationAdapter {
     tokenizer: Arc<TokenizationProcessor>,
+    last: Mutex<Option<(String, Arc<TokenizationOutput>)>>,
 }
 
 impl TokenizationAdapter {
     #[must_use]
     pub fn new(tokenizer: Arc<TokenizationProcessor>) -> Self {
-        Self { tokenizer }
+        Self {
+            tokenizer,
+            last: Mutex::new(None),
+        }
+    }
+
+    fn tokenized(&self, text: &str) -> Result<Arc<TokenizationOutput>> {
+        let mut guard = self.last.lock().expect("tokenization memo poisoned");
+        if let Some((cached_text, cached)) = guard.as_ref()
+            && cached_text == text
+        {
+            return Ok(cached.clone());
+        }
+        let out = Arc::new(self.tokenizer.tokenize_with_offsets(text)?);
+        *guard = Some((text.to_string(), out.clone()));
+        Ok(out)
     }
 }
 
@@ -50,12 +62,11 @@ impl TokenProvider for TokenizationAdapter {
     type Error = MmEmbeddingError;
 
     fn tokenize(&self, text: &str) -> std::result::Result<Vec<u32>, Self::Error> {
-        let out = self.tokenizer.tokenize_with_offsets(text)?;
-        Ok(out.tokens.into_iter().map(|t| t.id).collect())
+        Ok(self.tokenized(text)?.tokens.iter().map(|t| t.id).collect())
     }
 
     fn estimate_token_count(&self, text: &str) -> std::result::Result<usize, Self::Error> {
-        self.tokenizer.token_count(text)
+        Ok(self.tokenized(text)?.tokens.len())
     }
 
     fn token_to_char(
@@ -63,8 +74,11 @@ impl TokenProvider for TokenizationAdapter {
         text: &str,
         token_pos: usize,
     ) -> std::result::Result<Option<usize>, Self::Error> {
-        let out = self.tokenizer.tokenize_with_offsets(text)?;
-        Ok(out.tokens.get(token_pos).map(|t| t.char_start))
+        Ok(self
+            .tokenized(text)?
+            .tokens
+            .get(token_pos)
+            .map(|t| t.char_start))
     }
 
     fn char_to_token(
@@ -72,14 +86,14 @@ impl TokenProvider for TokenizationAdapter {
         text: &str,
         char_pos: usize,
     ) -> std::result::Result<Option<usize>, Self::Error> {
-        let out = self.tokenizer.tokenize_with_offsets(text)?;
+        let out = self.tokenized(text)?;
         for (idx, tok) in out.tokens.iter().enumerate() {
             if char_pos >= tok.char_start && char_pos < tok.char_end {
                 return Ok(Some(idx));
             }
         }
-        // char_pos beyond the last token: treat as "past end of input" rather
-        // than an error, mirroring embedding-llm behavior.
+        // char_pos past the last token clamps to the final index rather than
+        // erroring, matching embedding-llm's chunker contract.
         Ok(out
             .tokens
             .last()
@@ -90,10 +104,10 @@ impl TokenProvider for TokenizationAdapter {
         &self,
         text: &str,
     ) -> std::result::Result<Option<Vec<(usize, usize)>>, Self::Error> {
-        let out = self.tokenizer.tokenize_with_offsets(text)?;
         Ok(Some(
-            out.tokens
-                .into_iter()
+            self.tokenized(text)?
+                .tokens
+                .iter()
                 .map(|t| (t.char_start, t.char_end))
                 .collect(),
         ))
@@ -105,18 +119,21 @@ pub fn chunk_text(
     tokenizer: Arc<TokenizationProcessor>,
     config: ResolvedChunkingConfig,
 ) -> Result<Vec<EmbeddingChunk>> {
-    // Single-chunk fast path: if the input is short enough to fit in one
-    // chunk, skip the chunker entirely. This guarantees the spec invariant
-    // for `embed_text` of short inputs (begin=0, end=char_count).
-    let total_tokens = tokenizer.token_count(text)?;
+    // The adapter memoizes its last tokenize result. Doing the fast-path
+    // length check through it (instead of TokenizationProcessor::token_count)
+    // means the full-text encode is shared with the chunker when we fall
+    // through to the hierarchical path, avoiding a second O(N) encode.
+    let adapter = TokenizationAdapter::new(tokenizer);
+
+    let total_tokens = adapter.estimate_token_count(text)?;
     if total_tokens <= config.max_chunk_tokens as usize {
+        // Short input: one chunk spanning the whole text. tokens left empty
+        // because the embedding backend re-tokenizes internally; chunk-side
+        // token ids are only consumed by length-inspecting callers.
         return Ok(vec![EmbeddingChunk {
             content: text.to_string(),
             char_start: 0,
             char_end: text.chars().count(),
-            // Defer the actual token id fetch since the embedding backend
-            // will re-tokenize internally; chunk-side tokens are only used
-            // by callers that want to inspect chunk lengths.
             tokens: Vec::new(),
         }]);
     }
@@ -126,7 +143,6 @@ pub fn chunk_text(
         min_chunk_tokens: config.min_chunk_tokens as usize,
         ..HierarchicalChunkingConfig::for_embedding(config.max_chunk_tokens as usize)
     };
-    let adapter = TokenizationAdapter::new(tokenizer.clone());
     let mut chunker = HierarchicalChunker::new(
         hc_config,
         adapter,

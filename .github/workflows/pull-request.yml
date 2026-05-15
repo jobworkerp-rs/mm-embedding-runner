@@ -1,0 +1,90 @@
+name: Pull Request CI
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Build, lint and test
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ${{ vars.BUILD_CONTAINER || '' }}
+
+    steps:
+      - name: Install build prerequisites
+        if: vars.BUILD_CONTAINER != ''
+        run: |
+          apt-get update
+          apt-get install -y curl jq protobuf-compiler
+
+      # CI runs on a CUDA-capable runner, so the crate is built with the
+      # `cuda` feature (specification.md §6.1: Linux default + cuda required).
+      - name: Setup CUDA environment
+        run: |
+          echo "NVIDIA_VISIBLE_DEVICES=all" >> $GITHUB_ENV
+          echo "NVIDIA_DRIVER_CAPABILITIES=compute,utility" >> $GITHUB_ENV
+          echo "NVIDIA_DISABLE_REQUIRE=true" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-C relocation-model=pic" >> $GITHUB_ENV
+          echo "CFLAGS=-fPIC" >> $GITHUB_ENV
+          echo "CXXFLAGS=-fPIC" >> $GITHUB_ENV
+          echo "CMAKE_POSITION_INDEPENDENT_CODE=ON" >> $GITHUB_ENV
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protoc
+        if: vars.BUILD_CONTAINER == ''
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-pr-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-pr-
+            ${{ runner.os }}-target-
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Build (default / CPU)
+        run: cargo build --release
+
+      - name: Build (CUDA)
+        run: cargo build --release --features cuda
+
+      - name: Clippy (default)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Clippy (CUDA)
+        run: cargo clippy --all-targets --features cuda -- -D warnings
+
+      # `cargo test` runs tests/unit_*.rs and src #[cfg(test)] modules.
+      # #[ignore]-tagged integration/expensive tests need model download +
+      # GPU, so they stay out of the per-PR lane (specification.md §6.2).
+      - name: Run unit tests
+        run: cargo test --features cuda -- --test-threads=1

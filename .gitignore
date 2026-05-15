@@ -1,1 +1,6 @@
 target/
+
+# Per-developer editor settings. rust-analyzer feature selection is
+# machine-dependent (cuda on this host, metal on macOS, none on CPU CI),
+# so .vscode is not committed. See README "VSCode" section for an example.
+.vscode/

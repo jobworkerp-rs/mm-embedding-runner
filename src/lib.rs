@@ -16,12 +16,13 @@ pub mod protobuf {
     }
 }
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use jobworkerp_client::{plugins::MultiMethodPluginRunner, schema_to_json_string};
 use prost::Message;
 use std::collections::HashMap;
 
 use crate::backend::MmBackend;
+use crate::error::{MmEmbeddingError, Result as MmResult};
 use crate::settings::{ValidatedSettings, validate};
 
 pub const RUNNER_NAME: &str = "MultimodalEmbeddingRunner";
@@ -32,8 +33,6 @@ pub const METHOD_EMBED_IMAGE: &str = "embed_image";
 /// Qwen3-VL-Embedding instance to guarantee vector-space alignment by
 /// construction (specification.md §2.2 / §4.1).
 pub struct MmEmbeddingPlugin {
-    // None until load() succeeds. Holds the fastembed backend, the tokenizer
-    // used for chunking accounting, and the resolved settings.
     backend: Option<MmBackend>,
 }
 
@@ -46,26 +45,17 @@ impl MmEmbeddingPlugin {
         self.backend.as_ref().map(MmBackend::settings)
     }
 
-    fn run_embed_text(&mut self, args: &[u8]) -> Result<Vec<u8>> {
-        // Decode args first so that NotLoaded vs InvalidArgument is reported
-        // for the right reason: decode failure is the caller's fault and is
-        // surfaced regardless of whether the plugin has been loaded yet.
-        let decoded = protobuf::mm_embedding::EmbedTextArgs::decode(args)
-            .map_err(|e| anyhow!("InvalidArgument: failed to decode EmbedTextArgs: {e}"))?;
-        let backend = self
-            .backend
-            .as_ref()
-            .ok_or_else(|| anyhow!("NotLoaded: model is not loaded"))?;
+    fn run_embed_text(&mut self, args: &[u8]) -> MmResult<Vec<u8>> {
+        // Decode before the load check so a malformed payload is reported as
+        // the caller's fault (InvalidArgument) regardless of load state.
+        let decoded = protobuf::mm_embedding::EmbedTextArgs::decode(args)?;
+        let backend = self.backend.as_ref().ok_or(MmEmbeddingError::NotLoaded)?;
         embed_text_impl(backend, decoded)
     }
 
-    fn run_embed_image(&mut self, args: &[u8]) -> Result<Vec<u8>> {
-        let decoded = protobuf::mm_embedding::EmbedImageArgs::decode(args)
-            .map_err(|e| anyhow!("InvalidArgument: failed to decode EmbedImageArgs: {e}"))?;
-        let backend = self
-            .backend
-            .as_ref()
-            .ok_or_else(|| anyhow!("NotLoaded: model is not loaded"))?;
+    fn run_embed_image(&mut self, args: &[u8]) -> MmResult<Vec<u8>> {
+        let decoded = protobuf::mm_embedding::EmbedImageArgs::decode(args)?;
+        let backend = self.backend.as_ref().ok_or(MmEmbeddingError::NotLoaded)?;
         embed_image_impl(backend, decoded)
     }
 }
@@ -88,12 +78,14 @@ impl MultiMethodPluginRunner for MmEmbeddingPlugin {
     }
 
     fn load(&mut self, settings: Vec<u8>) -> Result<()> {
-        let proto =
-            protobuf::mm_embedding::MultimodalEmbeddingRunnerSettings::decode(&settings[..])
-                .map_err(|e| anyhow!("InvalidArgument: failed to decode settings: {e}"))?;
-        let validated = validate(proto).map_err(|e| anyhow!(e.to_string()))?;
-        let backend = MmBackend::load(validated).map_err(|e| anyhow!(e.to_string()))?;
-        self.backend = Some(backend);
+        let load = || -> MmResult<MmBackend> {
+            let proto =
+                protobuf::mm_embedding::MultimodalEmbeddingRunnerSettings::decode(&settings[..])?;
+            MmBackend::load(validate(proto)?)
+        };
+        // anyhow only at the trait boundary; MmEmbeddingError owns the
+        // prefixed Display, so error classification stays in error.rs.
+        self.backend = Some(load().map_err(anyhow::Error::from)?);
         Ok(())
     }
 
@@ -103,15 +95,15 @@ impl MultiMethodPluginRunner for MmEmbeddingPlugin {
         metadata: HashMap<String, String>,
         using: Option<&str>,
     ) -> (Result<Vec<u8>>, HashMap<String, String>) {
-        let result = match using {
-            None => Err(anyhow!("InvalidArgument: method not specified")),
+        let result: MmResult<Vec<u8>> = match using {
+            None => Err(MmEmbeddingError::invalid_argument("method not specified")),
             Some(METHOD_EMBED_TEXT) => self.run_embed_text(&args),
             Some(METHOD_EMBED_IMAGE) => self.run_embed_image(&args),
-            Some(other) => Err(anyhow!(
-                "InvalidArgument: unknown method '{other}' (supported: embed_text, embed_image)"
-            )),
+            Some(other) => Err(MmEmbeddingError::invalid_argument(format!(
+                "unknown method '{other}' (supported: embed_text, embed_image)"
+            ))),
         };
-        (result, metadata)
+        (result.map_err(anyhow::Error::from), metadata)
     }
 
     fn cancel(&mut self) -> bool {
@@ -182,50 +174,43 @@ impl MultiMethodPluginRunner for MmEmbeddingPlugin {
     }
 }
 
-fn embed_text_impl(
+/// A produced embedding plus the position/content metadata that differs
+/// between the two methods (char offsets for text, array index for image).
+struct EmbeddingEntry {
+    begin_position: u32,
+    end_position: u32,
+    content: String,
+}
+
+/// Shared tail of both method handlers: validate the backend returned one
+/// vector per input, then assemble the result protobuf. `op` names the
+/// backend call for the mismatch error message.
+fn finalize_embeddings(
     backend: &MmBackend,
-    args: protobuf::mm_embedding::EmbedTextArgs,
-) -> Result<Vec<u8>> {
-    if args.text.trim().is_empty() {
-        return Err(anyhow!("InvalidArgument: text must not be empty"));
-    }
-
-    let chunks = chunking::chunk_text(
-        &args.text,
-        backend.tokenizer(),
-        backend.settings().chunking_config,
-    )
-    .map_err(|e| anyhow!(e.to_string()))?;
-
-    // Batch the chunk contents into a single embed_texts call so we hit the
-    // backend once regardless of how many chunks the text yielded.
-    let chunk_texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-    let vectors = backend
-        .embed_texts(&chunk_texts)
-        .map_err(|e| anyhow!(e.to_string()))?;
-
-    if vectors.len() != chunks.len() {
-        return Err(anyhow!(
-            "BackendError: embed_texts returned {} vectors for {} chunks",
+    entries: Vec<EmbeddingEntry>,
+    vectors: Vec<Vec<f32>>,
+    op: &str,
+) -> MmResult<Vec<u8>> {
+    if vectors.len() != entries.len() {
+        return Err(MmEmbeddingError::backend(format!(
+            "{op} returned {} vectors for {} inputs",
             vectors.len(),
-            chunks.len()
-        ));
+            entries.len()
+        )));
     }
-
     let dim = vectors.first().map(Vec::len).unwrap_or(0);
-    let embeddings = chunks
+    let embeddings = entries
         .into_iter()
         .zip(vectors)
         .map(
-            |(c, v)| protobuf::mm_embedding::mm_embedding_result::Embedding {
+            |(e, v)| protobuf::mm_embedding::mm_embedding_result::Embedding {
                 values: v,
-                begin_position: c.char_start as u32,
-                end_position: c.char_end as u32,
-                content: c.content,
+                begin_position: e.begin_position,
+                end_position: e.end_position,
+                content: e.content,
             },
         )
         .collect();
-
     let result = protobuf::mm_embedding::MmEmbeddingResult {
         embeddings,
         model_info: Some(build_model_info(backend, dim)),
@@ -233,46 +218,55 @@ fn embed_text_impl(
     Ok(result.encode_to_vec())
 }
 
+fn embed_text_impl(
+    backend: &MmBackend,
+    args: protobuf::mm_embedding::EmbedTextArgs,
+) -> MmResult<Vec<u8>> {
+    if args.text.trim().is_empty() {
+        return Err(MmEmbeddingError::invalid_argument("text must not be empty"));
+    }
+
+    let chunks = chunking::chunk_text(
+        &args.text,
+        backend.tokenizer(),
+        backend.settings().chunking_config,
+    )?;
+
+    let chunk_texts: Vec<&str> = chunks.iter().map(|c| c.content.as_str()).collect();
+    let vectors = backend.embed_texts(&chunk_texts)?;
+
+    let entries = chunks
+        .into_iter()
+        .map(|c| EmbeddingEntry {
+            begin_position: c.char_start as u32,
+            end_position: c.char_end as u32,
+            content: c.content,
+        })
+        .collect();
+    finalize_embeddings(backend, entries, vectors, "embed_texts")
+}
+
 fn embed_image_impl(
     backend: &MmBackend,
     args: protobuf::mm_embedding::EmbedImageArgs,
-) -> Result<Vec<u8>> {
-    let prepared = image_validation::prepare_images(&args.items, backend.settings())
-        .map_err(|e| anyhow!(e.to_string()))?;
+) -> MmResult<Vec<u8>> {
+    let prepared = image_validation::prepare_images(&args.items, backend.settings())?;
 
     let byte_refs: Vec<&[u8]> = prepared.iter().map(|p| p.bytes.as_slice()).collect();
-    let vectors = backend
-        .embed_image_bytes(&byte_refs)
-        .map_err(|e| anyhow!(e.to_string()))?;
+    let vectors = backend.embed_image_bytes(&byte_refs)?;
 
-    if vectors.len() != prepared.len() {
-        return Err(anyhow!(
-            "BackendError: embed_image_bytes returned {} vectors for {} inputs",
-            vectors.len(),
-            prepared.len()
-        ));
-    }
-
-    let dim = vectors.first().map(Vec::len).unwrap_or(0);
-    let embeddings = prepared
+    let entries = prepared
         .into_iter()
-        .zip(vectors)
         .enumerate()
-        .map(
-            |(i, (p, v))| protobuf::mm_embedding::mm_embedding_result::Embedding {
-                values: v,
-                begin_position: i as u32,
-                end_position: (i as u32) + 1,
-                content: p.source_hint,
-            },
-        )
+        .map(|(i, p)| EmbeddingEntry {
+            // Image position fields carry the input array index, not char
+            // offsets (specification.md §3.6.2).
+            begin_position: i as u32,
+            end_position: (i as u32) + 1,
+            content: p.source_hint,
+        })
         .collect();
-
-    let result = protobuf::mm_embedding::MmEmbeddingResult {
-        embeddings,
-        model_info: Some(build_model_info(backend, dim)),
-    };
-    Ok(result.encode_to_vec())
+    finalize_embeddings(backend, entries, vectors, "embed_image_bytes")
 }
 
 fn build_model_info(
@@ -294,14 +288,17 @@ fn build_model_info(
     }
 }
 
-// C entry points used by the jobworkerp plugin loader. Both functions are
-// crossed by panic::catch_unwind so a panicking constructor on a non-CUDA
-// host (e.g. environment lookup failure) does not unwind across the FFI
-// boundary into the host process. See specification.md §4.4.
+// catch_unwind keeps a panicking constructor (e.g. env lookup failure on a
+// non-CUDA host) from unwinding across the FFI boundary into the host.
 #[unsafe(no_mangle)]
 pub extern "C" fn load_multi_method_plugin() -> Box<dyn MultiMethodPluginRunner + Send + Sync> {
     std::panic::catch_unwind(|| {
         dotenvy::dotenv().ok();
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            command_utils::util::tracing::tracing_init_from_env()
+                .await
+                .unwrap_or_default();
+        });
         Box::new(MmEmbeddingPlugin::new()) as Box<dyn MultiMethodPluginRunner + Send + Sync>
     })
     .unwrap_or_else(|e| {

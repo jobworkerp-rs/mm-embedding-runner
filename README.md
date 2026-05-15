@@ -161,27 +161,62 @@ CUDA 版は CPU 版と別の `.so` として配布し、`lib<name>_cuda.so` に�
 
 `#[ignore]` 付きテストはネットワーク・GPU を必要とするため PR ごと CI では実行されません。
 
-integration / expensive テストは既定で **CUDA** を使います（CPU 推論は実用にならないほど遅いため）。device は環境変数 `MM_TEST_DEVICE` で切り替えられます:
+integration / expensive テストの device は **ビルド時の feature から自動選択**されます:
+
+- `--features cuda` 付きビルド → CUDA
+- `--features metal` 付きビルド → Metal
+- feature なし（プレーンな `cargo test`）→ CPU（推論は非常に遅いが `UnsupportedDevice` で失敗しない）
+
+環境変数 `MM_TEST_DEVICE=cpu|cuda|metal` で明示指定すると最優先で尊重されます。指定した device の feature が無効なバイナリでは `UnsupportedDevice` になります（意図したシグナル）。
 
 ```bash
-# CUDA（既定。--features cuda でビルドが必要）
+# CUDA（推奨。実用的な速度）
 cargo test --features cuda --test integration_embed_text -- --ignored --test-threads=1
 
-# CPU（非常に遅い、動作確認用）
-MM_TEST_DEVICE=cpu cargo test --test integration_embed_text -- --ignored --test-threads=1
+# CPU（feature なし。動作確認用、非常に遅い）
+cargo test --test integration_embed_text -- --ignored --test-threads=1
+
+# device を明示（例: CUDA ビルドだが CPU で確認したい）
+MM_TEST_DEVICE=cpu cargo test --features cuda --test integration_embed_text -- --ignored --test-threads=1
 ```
+
+### VSCode の Run Test
+
+rust-analyzer の Run Test CodeLens は既定で feature なしビルドのため CPU 実行になります。CUDA / Metal で実行したい場合、`.vscode/settings.json`（個人設定。`.gitignore` 済みで commit されません）に feature を設定します:
+
+```jsonc
+// CUDA 環境
+{
+  "rust-analyzer.cargo.features": ["cuda"],
+  "rust-analyzer.check.features": ["cuda"]
+}
+```
+
+macOS では `["metal"]`、CPU のみの環境では `[]`（または設定なし）にします。feature 値はマシン依存のためリポジトリには commit せず、各自の環境に合わせてください。
 
 ---
 
 ## 9. 依存運用
 
-`jobworkerp-client` / `command-utils` は親リポジトリの submodule を path 参照しています:
+本 crate は独立 git リポジトリです。`jobworkerp-client` / `command-utils` は本リポジトリの submodule（`modules/` 配下）を path 参照しています。clone 後にビルドする前に submodule を取得してください:
 
 ```bash
+git clone <this-repo>
+cd mm-embedding-runner
 git submodule update --init --recursive
+cargo build --release
 ```
 
-submodule の revision を更新したときは本 crate の `Cargo.lock` も同時更新してください。本 crate は親ワークスペース外の独立ワークスペース（`Cargo.toml` 先頭の空 `[workspace]` テーブル）であり、独自の `mm-embedding-runner/Cargo.lock` を持ちます（再現性のため版管理対象）。
+`Cargo.toml` の path は:
+
+```toml
+jobworkerp-client = { path = "modules/jobworkerp-client" }
+command-utils    = { path = "modules/command-utils" }
+```
+
+submodule の revision を更新したときは本 crate の `Cargo.lock` も同時更新してください。本 crate は独立ワークスペース（`Cargo.toml` 先頭の空 `[workspace]` テーブル）であり、独自の `Cargo.lock` を持ちます（再現性のため版管理対象）。
+
+CI/CD は本リポジトリ直下の `.github/workflows/`（`pull-request.yml` / `main-merge.yml`）で完結します。CUDA 対応ランナー前提で、PR では default / cuda 両構成のビルド・lint・unit テストを実行し、main merge 時に CPU 版（`runner/`）と CUDA 版（`cuda_runner/`、`libmm_embedding_runner_cuda.so`）を別 artifact として Release します。`#[ignore]` 付き integration / expensive テストはモデル DL・GPU を要するため PR ごとには実行しません。
 
 ---
 

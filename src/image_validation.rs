@@ -164,8 +164,35 @@ fn preflight_decoded_size(bytes: &[u8], limit: DecodedImageBytesLimit) -> Result
     Ok(())
 }
 
-// Public helper exposed to integration tests (P5).
-#[doc(hidden)]
-pub fn _preflight_decoded_size_for_test(bytes: &[u8], limit: DecodedImageBytesLimit) -> Result<()> {
-    preflight_decoded_size(bytes, limit)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TINY_PNG: &[u8] = include_bytes!("../tests/fixtures/tiny_valid.png");
+    const ZIP_BOMB_PNG: &[u8] = include_bytes!("../tests/fixtures/zip_bomb.png");
+
+    #[test]
+    fn small_image_passes_default_preflight() {
+        preflight_decoded_size(TINY_PNG, DecodedImageBytesLimit::Default).unwrap();
+    }
+
+    #[test]
+    fn unlimited_allows_zip_bomb() {
+        preflight_decoded_size(ZIP_BOMB_PNG, DecodedImageBytesLimit::Unlimited).unwrap();
+    }
+
+    #[test]
+    fn small_cap_rejects_zip_bomb() {
+        let err = preflight_decoded_size(ZIP_BOMB_PNG, DecodedImageBytesLimit::Limited(1024))
+            .unwrap_err();
+        assert!(err.to_string().starts_with("InvalidArgument:"));
+        assert!(err.to_string().contains("decoded size exceeds"));
+    }
+
+    #[test]
+    fn invalid_header_rejected() {
+        let err =
+            preflight_decoded_size(b"NOTANIMAGE", DecodedImageBytesLimit::Default).unwrap_err();
+        assert!(err.to_string().starts_with("InvalidArgument:"));
+    }
 }

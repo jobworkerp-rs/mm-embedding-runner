@@ -74,9 +74,9 @@ impl MmBackend {
         self.tokenizer.clone()
     }
 
-    /// Batch text embedding. Wraps `Qwen3VLEmbedding::embed_texts` so callers
-    /// can keep their slice borrowing patterns simple.
-    pub fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    /// Batch text embedding. Takes `&[&str]` so callers can pass borrowed
+    /// chunk content without cloning it into owned `String`s.
+    pub fn embed_texts(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         self.model
             .embed_texts(texts)
             .map_err(|e| MmEmbeddingError::backend(format!("embed_texts failed: {e}")))

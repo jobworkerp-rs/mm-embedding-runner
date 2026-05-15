@@ -17,9 +17,10 @@ license = "MIT"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-# Sibling submodules referenced by relative path (specification.md §4.8.2).
-jobworkerp-client = { path = "../modules/jobworkerp-client" }
-command-utils    = { path = "../modules/command-utils" }
+# Git submodules under modules/, referenced by path (specification.md §4.8.2).
+# Run `git submodule update --init --recursive` before building.
+jobworkerp-client = { path = "modules/jobworkerp-client" }
+command-utils    = { path = "modules/command-utils" }
 
 # Multimodal embedding backend. Pin exactly to ensure API stability against
 # the surface verified during planning (Qwen3VLEmbedding::from_hf, embed_texts,

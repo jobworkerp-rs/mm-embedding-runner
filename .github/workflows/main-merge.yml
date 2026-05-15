@@ -1,0 +1,186 @@
+name: Release Plugin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build and Publish
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ${{ vars.BUILD_CONTAINER || '' }}
+
+    steps:
+      - name: Install build prerequisites
+        if: vars.BUILD_CONTAINER != ''
+        run: |
+          apt-get update
+          apt-get install -y curl jq xz-utils protobuf-compiler
+
+      - name: Setup CUDA environment
+        run: |
+          echo "NVIDIA_VISIBLE_DEVICES=all" >> $GITHUB_ENV
+          echo "NVIDIA_DRIVER_CAPABILITIES=compute,utility" >> $GITHUB_ENV
+          echo "NVIDIA_DISABLE_REQUIRE=true" >> $GITHUB_ENV
+          echo "RUSTFLAGS=-C relocation-model=pic" >> $GITHUB_ENV
+          echo "CFLAGS=-fPIC" >> $GITHUB_ENV
+          echo "CXXFLAGS=-fPIC" >> $GITHUB_ENV
+          echo "CMAKE_POSITION_INDEPENDENT_CODE=ON" >> $GITHUB_ENV
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Install protoc
+        if: vars.BUILD_CONTAINER == ''
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-
+
+      - name: Build (default / CPU)
+        run: cargo build --release
+
+      - name: Build (CUDA)
+        run: cargo build --release --features cuda
+
+      - name: Run unit tests
+        run: cargo test --features cuda -- --test-threads=1
+
+      - name: Generate tag
+        id: tag
+        run: |
+          TAG_VERSION=$(git show --no-patch --no-notes --pretty='%ci' HEAD | sed -e 's/^\([0-9]\+\)\-\([0-9]\+\)\-\([0-9]\+\)\s\([0-9]\+\):\([0-9]\+\):\([0-9]\+\).*$/\1\2\3_\4\5\6/')
+          echo "tag=$TAG_VERSION" >> $GITHUB_OUTPUT
+          echo "Generated tag: $TAG_VERSION"
+
+      - name: Prepare artifacts
+        run: |
+          ARCH=$(uname -m)
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          PLATFORM="${ARCH}-${OS}"
+          mkdir -p artifacts
+
+          # The CPU and CUDA builds share the target/release/ path, so the
+          # CUDA build above overwrote the CPU .so. Rebuild the CPU variant
+          # into a separate file. The CUDA variant carries libcuda.so.1 as a
+          # NEEDED dependency and is deployed under cuda_runner/ on GPU hosts;
+          # the CPU variant under runner/ (see CLAUDE.md "CUDA Shared Library
+          # Dependency - Final Solution").
+          CUDA_SO="target/release/libmm_embedding_runner.so"
+          if [ -f "$CUDA_SO" ]; then
+            xz -c -9 "$CUDA_SO" > "artifacts/mm_embedding_runner_cuda-${PLATFORM}.so.xz"
+            echo "Packaged CUDA: artifacts/mm_embedding_runner_cuda-${PLATFORM}.so.xz"
+          else
+            echo "ERROR: CUDA .so not found at $CUDA_SO"
+            exit 1
+          fi
+
+          cargo build --release
+          CPU_SO="target/release/libmm_embedding_runner.so"
+          if [ -f "$CPU_SO" ]; then
+            xz -c -9 "$CPU_SO" > "artifacts/mm_embedding_runner-${PLATFORM}.so.xz"
+            echo "Packaged CPU: artifacts/mm_embedding_runner-${PLATFORM}.so.xz"
+          else
+            echo "ERROR: CPU .so not found at $CPU_SO"
+            exit 1
+          fi
+
+          echo "Artifacts:"
+          ls -lh artifacts/
+
+      - name: Publish to GitHub Release
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          REPO="${{ vars.GH_RELEASE_REPO || github.repository }}"
+          TOKEN="${{ secrets.GH_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}"
+          API="https://api.github.com/repos/${REPO}"
+          AUTH="Authorization: token ${TOKEN}"
+
+          echo "Creating release for tag: ${TAG} on repo: ${REPO}"
+          CREATE_RESP=$(curl -s -w "\n%{http_code}" -X POST "${API}/releases" \
+            -H "${AUTH}" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":\"Build ${TAG}\",\"target_commitish\":\"main\"}")
+          CREATE_HTTP=$(echo "$CREATE_RESP" | tail -1)
+          CREATE_BODY=$(echo "$CREATE_RESP" | sed '$d')
+          echo "Create release HTTP status: $CREATE_HTTP"
+          if [ "$CREATE_HTTP" = "201" ]; then
+            echo "Release created successfully"
+          elif [ "$CREATE_HTTP" = "422" ]; then
+            echo "Release already exists, continuing..."
+          else
+            echo "Unexpected response: $CREATE_BODY"
+          fi
+
+          GET_RESP=$(curl -s -w "\n%{http_code}" "${API}/releases/tags/${TAG}" -H "${AUTH}")
+          GET_HTTP=$(echo "$GET_RESP" | tail -1)
+          GET_BODY=$(echo "$GET_RESP" | sed '$d')
+          if [ "$GET_HTTP" != "200" ]; then
+            echo "ERROR: Could not find release for tag ${TAG} (HTTP ${GET_HTTP})"
+            echo "$GET_BODY"
+            exit 1
+          fi
+          RELEASE_ID=$(echo "$GET_BODY" | grep -o '"id" *: *[0-9]*' | head -1 | grep -o '[0-9]*')
+          echo "Release ID: $RELEASE_ID"
+
+          UPLOAD_URL="https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets"
+          for f in artifacts/*.so.xz; do
+            [ -f "$f" ] || continue
+            filename=$(basename "$f")
+            echo "Processing: $filename"
+
+            ASSETS_JSON=$(curl -s --max-time 30 "${API}/releases/${RELEASE_ID}/assets" -H "${AUTH}")
+            ASSET_ID=$(echo "$ASSETS_JSON" | grep -B2 "\"name\" *: *\"${filename}\"" | grep -o '"id" *: *[0-9]*' | grep -o '[0-9]*' || true)
+            if [ -n "$ASSET_ID" ]; then
+              curl -s --max-time 30 -X DELETE "${API}/releases/assets/${ASSET_ID}" -H "${AUTH}"
+              echo "Deleted existing asset: $filename (ID: $ASSET_ID)"
+            fi
+
+            UPLOAD_HTTP=$(curl -s -o /tmp/upload_resp.json -w "%{http_code}" \
+              --max-time 600 \
+              -X POST "${UPLOAD_URL}?name=${filename}" \
+              -H "${AUTH}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@${f}")
+            echo "Upload HTTP status: $UPLOAD_HTTP"
+            if [ "$UPLOAD_HTTP" = "201" ]; then
+              echo "Uploaded: $filename"
+            else
+              echo "ERROR: Failed to upload $filename (HTTP ${UPLOAD_HTTP})"
+              cat /tmp/upload_resp.json 2>/dev/null || true
+              exit 1
+            fi
+          done
