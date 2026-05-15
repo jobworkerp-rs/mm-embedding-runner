@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package mm_embedding;
+
+// Arguments for the embed_image method (specification.md §3.5).
+message EmbedImageArgs {
+  // One or more images. Empty array is rejected (InvalidArgument).
+  repeated ImageItem items = 1;
+}
+
+message ImageItem {
+  // Exactly one source must be set. The url variant is reserved on the wire
+  // for v0.2+, but is rejected with InvalidArgument in v0.1.
+  oneof source {
+    string file_path = 1;
+    bytes  data      = 2;
+    string url       = 3;
+  }
+  // Optional human-readable identifier surfaced as the result's content field
+  // when present (otherwise file_path or "image[#i]" is used).
+  optional string label = 4;
+}

@@ -1,0 +1,1 @@
+The quick brown fox jumps over the lazy dog. ASCII-only text remains useful for the simplest byte=char invariant check, where every char index coincides with its byte position. Tokenization length depends on the tokenizer used, but the fixture content stays predictable for diffing.

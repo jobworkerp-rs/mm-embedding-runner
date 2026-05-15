@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package mm_embedding;
+
+// Arguments for the embed_text method (specification.md §3.4).
+// Long text is automatically chunked according to chunking_config; each
+// window becomes one Embedding in the result.
+message EmbedTextArgs {
+  // Input text. Empty / whitespace-only strings are rejected (InvalidArgument).
+  // To use Qwen3-VL-Embedding's instruction-aware retrieval, include the
+  // instruction prefix in this field directly, e.g.
+  //   "Instruct: Retrieve images or text relevant to the user's query.\n
+  //    Query: a cat"
+  // See specification.md §3.4 for the rationale.
+  string text = 1;
+}

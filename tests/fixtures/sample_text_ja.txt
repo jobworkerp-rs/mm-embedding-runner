@@ -1,0 +1,1 @@
+日本語の文章は UTF-8 で 3 バイトの符号化単位を使うため、byte offset と char index の関係が ASCII とは異なります。トークナイザが返す offset を正しく char index に変換できないと、結果の begin_position や end_position の意味論がずれてしまいます。チャンキング処理の検証に最適な fixture です。

@@ -1,0 +1,1 @@
+Mixed input: hello 👋 world 🌍 with 4-byte UTF-8 emoji 🎉. The surrogate-pair-equivalent code points expand to multiple bytes per char, but Rust's str::chars() iterates Unicode scalar values so we can still align tokenizer byte offsets with char indices reliably 🦀.

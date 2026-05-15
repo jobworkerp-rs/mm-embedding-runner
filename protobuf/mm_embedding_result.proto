@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package mm_embedding;
+
+// MmEmbeddingResult mirrors the JSON shape and wire format of
+// embedding_llm.EmbeddingLlmResult (field names and tag numbers identical) so
+// JSON consumers and protobuf-aware callers can decode either runner's output.
+// The proto package and message names are intentionally distinct so callers
+// can also tell which runner produced the result. See specification.md §3.6.
+message MmEmbeddingResult {
+  message Embedding {
+    // L2-normalized vector. Always normalized; the runner does not expose a
+    // toggle (specification.md §3.3, §3.6).
+    repeated float values = 1;
+    // Source-position semantics depend on the method (specification.md §3.6.1
+    // for embed_text, §3.6.2 for embed_image).
+    uint32 begin_position = 2;
+    uint32 end_position = 3;
+    string content = 4;
+  }
+  repeated Embedding embeddings = 1;
+  optional ModelInfo model_info = 2;
+}
+
+message ModelInfo {
+  string model_name = 1;
+  uint32 embedding_dimension = 2;
+  string dtype_used = 3;
+  // Always true for this runner because the embed_image method is supported.
+  bool supports_vision = 4;
+  // Always false in v0.1.
+  bool supports_audio = 5;
+  // Unset in v0.1 (no audio support).
+  optional uint32 audio_sample_rate = 6;
+}

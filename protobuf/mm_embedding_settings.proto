@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package mm_embedding;
+
+// Multimodal embedding runner settings.
+// See specification.md §3.3 for field semantics and §3.3.2 for validation.
+message MultimodalEmbeddingRunnerSettings {
+  // HuggingFace repository ID (e.g. "Qwen/Qwen3-VL-Embedding-2B").
+  // Trim-empty values are rejected at load() time.
+  string model_id = 1;
+
+  Device device = 2;
+  // CUDA device index when device == CUDA. Defaults to 0 when unset.
+  optional uint32 gpu_device_index = 3;
+
+  DType dtype = 4;
+
+  // Runner default: 2048. Allowed range: [16, 32768].
+  // The Qwen3-VL-Embedding model itself supports up to 32K tokens, but this
+  // runner caps at the configured value to keep memory predictable.
+  uint32 max_sequence_length = 5;
+
+  // Per-image compressed input size cap (bytes). Defaults to 10 MiB.
+  optional uint64 image_size_limit_bytes = 6;
+
+  // Per-image decoded bitmap size cap (bytes). Unset => 256 MiB.
+  // Some(0) => unlimited (matches MediaInput.max_decoded_media_bytes convention).
+  optional uint64 max_decoded_image_bytes = 7;
+
+  // Whitelist of directories from which file_path image sources are accepted.
+  // Empty (the default) means file_path sources are rejected entirely.
+  // The runner canonicalizes each entry at load() time and matches inputs by
+  // Path::starts_with on the canonical path (component-aware).
+  repeated string allowed_image_dirs = 8;
+
+  // Tokenizer model ID for char-offset accounting. Defaults to model_id when unset.
+  optional string tokenizer_model_id = 9;
+
+  // Hierarchical text chunking config. Defaults derived from max_sequence_length
+  // when unset (see specification.md §3.3.1).
+  optional ChunkingConfig chunking_config = 10;
+}
+
+enum Device {
+  DEVICE_UNSPECIFIED = 0;
+  CPU = 1;
+  CUDA = 2;
+  METAL = 3;
+}
+
+enum DType {
+  DTYPE_UNSPECIFIED = 0;
+  F32 = 1;
+  F16 = 2;
+  BF16 = 3;
+}
+
+// Field names and semantics intentionally align with the existing
+// embedding-llm HierarchicalChunkingConfig so command-utils::HierarchicalChunker
+// can be reused (specification.md §3.3.1 / §4.8.2).
+message ChunkingConfig {
+  // Upper bound on tokens per chunk. Defaults to max_sequence_length when unset.
+  optional uint32 max_chunk_tokens = 1;
+  // Lower bound used by the merging step. Defaults to 0 (matches the
+  // for_embedding() preset).
+  optional uint32 min_chunk_tokens = 2;
+}

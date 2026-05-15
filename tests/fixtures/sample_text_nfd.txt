@@ -1,0 +1,1 @@
+Café résumé naïve — NFD decomposed form: combining marks are separate code points after the base letter.

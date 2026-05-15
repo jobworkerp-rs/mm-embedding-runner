@@ -1,0 +1,1 @@
+Café résumé naïve — NFC composed form uses a single code point per accented letter.

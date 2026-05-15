@@ -1,0 +1,70 @@
+# Empty [workspace] table makes this crate an isolated workspace root,
+# preventing cargo from traversing up to the parent workspace. This keeps the
+# fastembed/candle-core dependency tree separate from the parent workspace's
+# llama-cpp-2 ecosystem (see specification.md §1.3).
+[workspace]
+
+[package]
+name = "mm-embedding-runner"
+version = "0.1.0"
+edition = "2024"
+authors = ["sutr"]
+description = "Multimodal embedding plugin (text + image) backed by fastembed-rs Qwen3-VL-Embedding"
+repository = "https://github.com/jobworkerp-rs/llama-plugins"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+# Sibling submodules referenced by relative path (specification.md §4.8.2).
+jobworkerp-client = { path = "../modules/jobworkerp-client" }
+command-utils    = { path = "../modules/command-utils" }
+
+# Multimodal embedding backend. Pin exactly to ensure API stability against
+# the surface verified during planning (Qwen3VLEmbedding::from_hf, embed_texts,
+# embed_image_bytes).
+fastembed = { version = "=5.13.4", features = ["qwen3"] }
+# Match fastembed's pinned candle-core to avoid duplicate compilation; feature
+# selection (cuda/metal) propagates from fastembed/* features.
+candle-core = "=0.10.2"
+
+# Image preflight (header sniff + dimension extraction) for zip-bomb defense
+# without invoking the full decoder. See specification.md §3.5.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+
+# HuggingFace Hub for separately fetching tokenizer.json (Qwen3VLEmbedding
+# itself loads its own weights internally).
+hf-hub = "0.5"
+
+# Tokenizer for char/byte offset accounting in chunking.
+tokenizers = "0.22"
+
+# Force vendored OpenSSL so the resulting .so does not depend on host libssl,
+# matching the policy used by the existing embedding-llm plugin.
+openssl = { version = "0.10", features = ["vendored"] }
+
+anyhow       = "1"
+async-trait  = "0.1"
+prost        = "0.14"
+schemars     = { version = "1.0.4", features = ["chrono04"] }
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+thiserror    = "2"
+tokio        = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing      = "0.1"
+dotenvy      = "0.15"
+once_cell    = "1"
+
+[build-dependencies]
+prost-build = "0.14"
+
+[features]
+default = []
+# CUDA/Metal acceleration is passed through to fastembed which in turn
+# propagates to candle-core/candle-nn (see specification.md §4.3).
+cuda  = ["fastembed/cuda"]
+metal = ["fastembed/metal"]
+
+[dev-dependencies]
+tempfile = "3"
