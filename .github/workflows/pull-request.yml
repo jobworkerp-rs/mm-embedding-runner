@@ -15,11 +15,16 @@ jobs:
     container: ${{ vars.BUILD_CONTAINER || '' }}
 
     steps:
-      - name: Install build prerequisites
+      # The build container has no Node.js, which the Node-based
+      # actions/checkout / actions/cache actions require. Install it (plus
+      # protoc for the prost build script) before any action step runs.
+      - name: Install Node.js and build prerequisites
         if: vars.BUILD_CONTAINER != ''
         run: |
           apt-get update
           apt-get install -y curl jq protobuf-compiler
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y nodejs
 
       # CI runs on a CUDA-capable runner, so the crate is built with the
       # `cuda` feature (specification.md §6.1: Linux default + cuda required).
