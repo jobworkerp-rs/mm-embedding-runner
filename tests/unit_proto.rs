@@ -65,7 +65,7 @@ fn embed_image_args_roundtrip_all_source_variants() {
 fn result_roundtrip_matches_field_names_with_embedding_llm() {
     // The set of fields here MUST match embedding-llm's EmbeddingLlmResult
     // wire layout so JSON consumers can decode either runner's payload
-    // interchangeably (specification.md §3.6).
+    // interchangeably.
     let original = MmEmbeddingResult {
         embeddings: vec![
             Embedding {
@@ -99,7 +99,7 @@ fn result_roundtrip_matches_field_names_with_embedding_llm() {
 fn result_json_field_names_are_canonical() {
     // Snake_case is the wire-level canonical form; the Serialize impl emitted
     // by prost/serde should preserve that so JSON shape stays aligned with
-    // embedding-llm consumers (specification.md §3.6).
+    // embedding-llm consumers.
     let result = MmEmbeddingResult {
         embeddings: vec![Embedding {
             values: vec![1.0],

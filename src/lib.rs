@@ -29,9 +29,9 @@ pub const RUNNER_NAME: &str = "MultimodalEmbeddingRunner";
 pub const METHOD_EMBED_TEXT: &str = "embed_text";
 pub const METHOD_EMBED_IMAGE: &str = "embed_image";
 
-/// Multimodal embedding plugin: text and image inputs share a single
-/// Qwen3-VL-Embedding instance to guarantee vector-space alignment by
-/// construction (specification.md §2.2 / §4.1).
+/// Multimodal embedding plugin. Text and image inputs are embedded by a
+/// single shared Qwen3-VL-Embedding instance, so their vectors live in the
+/// same space and are directly comparable (e.g. cosine similarity).
 pub struct MmEmbeddingPlugin {
     backend: Option<MmBackend>,
 }
@@ -259,8 +259,8 @@ fn embed_image_impl(
         .into_iter()
         .enumerate()
         .map(|(i, p)| EmbeddingEntry {
-            // Image position fields carry the input array index, not char
-            // offsets (specification.md §3.6.2).
+            // For images, position fields are the input array index (not
+            // char offsets): begin = i, end = i + 1.
             begin_position: i as u32,
             end_position: (i as u32) + 1,
             content: p.source_hint,

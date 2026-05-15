@@ -1,10 +1,10 @@
 //! Lazy fastembed backend wrapper.
 //!
-//! The backend is constructed in `load()` (specification.md §4.4) so the
-//! plugin can be discovered and have its metadata queried without touching
-//! CUDA / candle. Once loaded, the same `Qwen3VLEmbedding` instance is
-//! shared by both methods (`embed_text` and `embed_image`) to guarantee
-//! vector-space alignment by construction (§2.2 / §4.1).
+//! The backend is constructed in `load()`, not at plugin construction, so
+//! the plugin can be discovered and have its metadata queried on hosts
+//! without CUDA / candle available. Once loaded, the same
+//! `Qwen3VLEmbedding` instance serves both `embed_text` and `embed_image`,
+//! so their vectors share one space and are directly comparable.
 
 use std::sync::Arc;
 
@@ -84,7 +84,8 @@ impl MmBackend {
 
     /// Batch image embedding from raw bytes. We never call fastembed's
     /// path-based `embed_images` because it would re-open the file after our
-    /// validation step, opening a TOCTOU window (specification.md §3.5).
+    /// validation step, opening a TOCTOU window; passing the already-read
+    /// bytes closes that window.
     pub fn embed_image_bytes(&self, images: &[&[u8]]) -> Result<Vec<Vec<f32>>> {
         self.model
             .embed_image_bytes(images)

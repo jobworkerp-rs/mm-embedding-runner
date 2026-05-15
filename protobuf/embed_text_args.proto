@@ -2,15 +2,17 @@ syntax = "proto3";
 
 package mm_embedding;
 
-// Arguments for the embed_text method (specification.md §3.4).
-// Long text is automatically chunked according to chunking_config; each
-// window becomes one Embedding in the result.
+// Arguments for the embed_text method. Text longer than the configured
+// max_sequence_length is split into chunks; each chunk produces one
+// Embedding entry in the result, in order.
 message EmbedTextArgs {
-  // Input text. Empty / whitespace-only strings are rejected (InvalidArgument).
-  // To use Qwen3-VL-Embedding's instruction-aware retrieval, include the
-  // instruction prefix in this field directly, e.g.
+  // Input text. Empty or whitespace-only strings are rejected with an
+  // "InvalidArgument:" error.
+  //
+  // There is no separate instruction field. The model is instruction-aware,
+  // so to steer retrieval, prepend the instruction to this text directly,
+  // for example:
   //   "Instruct: Retrieve images or text relevant to the user's query.\n
   //    Query: a cat"
-  // See specification.md §3.4 for the rationale.
   string text = 1;
 }

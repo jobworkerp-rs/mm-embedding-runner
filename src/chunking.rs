@@ -1,8 +1,10 @@
 //! Adapter for `command_utils::text::chunking::HierarchicalChunker`.
 //!
-//! Conventions (specification.md §3.6.1):
-//! - `char_start` / `char_end` are char indices (Unicode scalar values).
-//! - `content` always equals `text.chars().skip(char_start).take(char_end - char_start).collect()`.
+//! Conventions for the produced chunks:
+//! - `char_start` / `char_end` are char indices (Unicode scalar values),
+//!   not byte offsets.
+//! - `content` always equals
+//!   `text.chars().skip(char_start).take(char_end - char_start).collect()`.
 
 use std::sync::{Arc, Mutex};
 
@@ -158,7 +160,7 @@ pub fn chunk_text(
     // the original text slice (observed: in the embedding flow the chunker
     // may emit `content` that is shorter than `char_end - char_start`).
     //
-    // The runner's contract (specification.md §3.6.1) requires
+    // Callers require:
     //   content == text.chars().skip(char_start).take(char_end-char_start)
     //
     // So we drop the chunker's `content` field and rebuild it from the

@@ -2,18 +2,27 @@ syntax = "proto3";
 
 package mm_embedding;
 
-// MmEmbeddingResult mirrors the JSON shape and wire format of
-// embedding_llm.EmbeddingLlmResult (field names and tag numbers identical) so
-// JSON consumers and protobuf-aware callers can decode either runner's output.
-// The proto package and message names are intentionally distinct so callers
-// can also tell which runner produced the result. See specification.md §3.6.
+// Result for both embed_text and embed_image. One Embedding entry per text
+// chunk (embed_text) or per input image (embed_image), in input order.
 message MmEmbeddingResult {
   message Embedding {
-    // L2-normalized vector. Always normalized; the runner does not expose a
-    // toggle (specification.md §3.3, §3.6).
+    // The embedding vector. Always L2-normalized (Euclidean norm ~= 1); the
+    // runner has no option to return un-normalized vectors.
     repeated float values = 1;
-    // Source-position semantics depend on the method (specification.md §3.6.1
-    // for embed_text, §3.6.2 for embed_image).
+
+    // begin_position / end_position / content meaning depends on the method:
+    //
+    // embed_text:
+    //   begin_position / end_position are character offsets (Unicode scalar
+    //   value indices, NOT byte offsets) into the original input text,
+    //   marking the half-open range [begin_position, end_position) that this
+    //   chunk covers. content is exactly that substring.
+    //
+    // embed_image:
+    //   begin_position is the 0-based index of this image in the input
+    //   items array; end_position is begin_position + 1. content is the
+    //   item's label if set, otherwise its file_path, otherwise the literal
+    //   string "image[#i]" where i is the index.
     uint32 begin_position = 2;
     uint32 end_position = 3;
     string content = 4;
@@ -23,13 +32,16 @@ message MmEmbeddingResult {
 }
 
 message ModelInfo {
+  // HuggingFace repository ID of the loaded model.
   string model_name = 1;
+  // Length of every values vector in the result.
   uint32 embedding_dimension = 2;
+  // Compute dtype used: "F32", "F16", or "BF16".
   string dtype_used = 3;
-  // Always true for this runner because the embed_image method is supported.
+  // Always true: this runner supports image embedding.
   bool supports_vision = 4;
-  // Always false in v0.1.
+  // Always false: audio embedding is not supported.
   bool supports_audio = 5;
-  // Unset in v0.1 (no audio support).
+  // Always unset: no audio support.
   optional uint32 audio_sample_rate = 6;
 }

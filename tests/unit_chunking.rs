@@ -22,7 +22,7 @@ fn fixture_text(name: &str) -> String {
 
 fn slice_chars(text: &str, char_start: usize, char_end: usize) -> String {
     // Use chars().skip/take instead of byte indexing because chunk positions
-    // are recorded as char indices, not byte offsets (specification.md §3.6.1).
+    // are recorded as char indices, not byte offsets.
     text.chars()
         .skip(char_start)
         .take(char_end.saturating_sub(char_start))

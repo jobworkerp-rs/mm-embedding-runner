@@ -2,7 +2,8 @@ syntax = "proto3";
 
 package mm_embedding;
 
-// Arguments for the embed_image method (specification.md §3.5).
+// Arguments for the embed_image method. Each item produces one Embedding
+// entry in the result, in input order.
 message EmbedImageArgs {
   // One or more images. Empty array is rejected (InvalidArgument).
   repeated ImageItem items = 1;

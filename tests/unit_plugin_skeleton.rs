@@ -88,8 +88,8 @@ fn settings_schema_is_not_empty_object() {
     let properties = value
         .get("properties")
         .expect("schema should expose 'properties'");
-    // model_id and max_sequence_length are mandatory fields per
-    // specification.md §3.3; they MUST show up in the generated schema.
+    // model_id and max_sequence_length are mandatory settings fields, so
+    // they MUST show up in the generated schema.
     assert!(properties.get("model_id").is_some(), "{schema_str}");
     assert!(
         properties.get("max_sequence_length").is_some(),

@@ -1,4 +1,4 @@
-//! Image input validation and preflight (specification.md §3.5).
+//! Image input validation and decode-size preflight.
 //!
 //! Responsibilities:
 //! - Reject empty `items`, missing `source`, and `url` sources up front.
@@ -23,8 +23,8 @@ use crate::error::{MmEmbeddingError, Result};
 use crate::protobuf::mm_embedding::{ImageItem, image_item::Source as ImageSource};
 use crate::settings::{DecodedImageBytesLimit, ValidatedSettings};
 
-/// Bytes for the image plus the metadata the caller wants surfaced in the
-/// result `content` field (specification.md §3.6.2).
+/// Image bytes plus the identifier surfaced in the result `content` field
+/// (the item's label, else its file_path, else "image[#i]").
 #[derive(Debug)]
 pub struct PreparedImage {
     pub bytes: Vec<u8>,
@@ -131,7 +131,7 @@ fn load_file_path(path_str: &str, settings: &ValidatedSettings) -> Result<Vec<u8
 /// in `allowed_dirs` was canonicalized at settings load time, so we can
 /// rely on `Path::starts_with` to enforce a *path component* prefix match
 /// rather than a raw string prefix. This rules out the `/tmp/allow` vs
-/// `/tmp/allow_evil` collision (specification.md §3.5).
+/// `/tmp/allow_evil` collision.
 fn is_within_allowed_dirs(canonical_target: &Path, allowed_dirs: &[PathBuf]) -> bool {
     allowed_dirs
         .iter()

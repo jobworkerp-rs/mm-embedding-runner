@@ -1,8 +1,9 @@
 use thiserror::Error;
 
-// Display prefixes match specification.md §3.7 exactly. Tests rely on
-// starts_with("Prefix:") matching, so changing these strings is a breaking
-// change to the test contract.
+// The Display prefix of each variant ("InvalidArgument:", "NotLoaded:",
+// etc.) is the public error classification surfaced to callers. Tests and
+// callers match on it via starts_with, so changing these strings is a
+// breaking change.
 #[derive(Error, Debug)]
 pub enum MmEmbeddingError {
     #[error("InvalidArgument: {0}")]

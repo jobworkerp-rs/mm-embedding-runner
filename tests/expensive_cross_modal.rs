@@ -3,7 +3,7 @@
 //! integration suite. We use the synthetic `tiny_valid.png` fixture and
 //! settle for the looser invariant that the two modalities produce vectors
 //! of matching dimension and well-defined cosine similarity, while we wait
-//! for a real fixture to be added later (see specification.md §6.3 / §7).
+//! for a real fixture to be added later.
 
 mod common;
 

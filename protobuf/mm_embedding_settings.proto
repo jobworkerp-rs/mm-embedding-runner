@@ -2,8 +2,9 @@ syntax = "proto3";
 
 package mm_embedding;
 
-// Multimodal embedding runner settings.
-// See specification.md §3.3 for field semantics and §3.3.2 for validation.
+// Multimodal embedding runner settings, supplied once when the plugin is
+// loaded. Invalid values are rejected at load time with an
+// "InvalidArgument:" error.
 message MultimodalEmbeddingRunnerSettings {
   // HuggingFace repository ID (e.g. "Qwen/Qwen3-VL-Embedding-2B").
   // Trim-empty values are rejected at load() time.
@@ -23,8 +24,8 @@ message MultimodalEmbeddingRunnerSettings {
   // Per-image compressed input size cap (bytes). Defaults to 10 MiB.
   optional uint64 image_size_limit_bytes = 6;
 
-  // Per-image decoded bitmap size cap (bytes). Unset => 256 MiB.
-  // Some(0) => unlimited (matches MediaInput.max_decoded_media_bytes convention).
+  // Per-image decoded bitmap size cap (bytes), checked before decoding via
+  // width*height*4. Unset => 256 MiB cap. Value 0 => unlimited (no cap).
   optional uint64 max_decoded_image_bytes = 7;
 
   // Whitelist of directories from which file_path image sources are accepted.
@@ -36,8 +37,9 @@ message MultimodalEmbeddingRunnerSettings {
   // Tokenizer model ID for char-offset accounting. Defaults to model_id when unset.
   optional string tokenizer_model_id = 9;
 
-  // Hierarchical text chunking config. Defaults derived from max_sequence_length
-  // when unset (see specification.md §3.3.1).
+  // Hierarchical text chunking config for embed_text. When unset, defaults
+  // are derived from max_sequence_length: max_chunk_tokens =
+  // max_sequence_length and min_chunk_tokens = 0.
   optional ChunkingConfig chunking_config = 10;
 }
 
@@ -55,13 +57,12 @@ enum DType {
   BF16 = 3;
 }
 
-// Field names and semantics intentionally align with the existing
-// embedding-llm HierarchicalChunkingConfig so command-utils::HierarchicalChunker
-// can be reused (specification.md §3.3.1 / §4.8.2).
+// Hierarchical chunking parameters for the embed_text method.
 message ChunkingConfig {
-  // Upper bound on tokens per chunk. Defaults to max_sequence_length when unset.
+  // Upper bound on tokens per chunk. When unset, defaults to
+  // max_sequence_length. Must be > 0 and <= max_sequence_length.
   optional uint32 max_chunk_tokens = 1;
-  // Lower bound used by the merging step. Defaults to 0 (matches the
-  // for_embedding() preset).
+  // Lower bound used when merging small adjacent chunks. When unset,
+  // defaults to 0. Must be strictly less than max_chunk_tokens.
   optional uint32 min_chunk_tokens = 2;
 }

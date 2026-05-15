@@ -3,9 +3,8 @@
 //! fastembed-rs does not expose its internal tokenizer, so we maintain our
 //! own `tokenizers::Tokenizer` and use it strictly for:
 //! 1. Counting tokens so the chunker can decide whether splitting is needed.
-//! 2. Recovering `(char_start, char_end)` spans per token so chunk boundaries
-//!    can be mapped back to character positions in the result (§4.8 and
-//!    §3.6.1).
+//! 2. Recovering `(char_start, char_end)` spans per token so chunk
+//!    boundaries can be reported as character positions in the result.
 //!
 //! The byte→char conversion lives in `offset::CharByteMap` so the unit tests
 //! can exercise it independently without spinning up a real tokenizer.
@@ -58,8 +57,9 @@ impl TokenizationProcessor {
     /// the runner maintains its own copy for chunking accounting.
     ///
     /// Cache directory is governed by the standard `HF_HOME` / `HF_HUB_CACHE`
-    /// environment variables; see specification.md §3.3 for why the runner
-    /// does not surface its own cache_dir setting.
+    /// environment variables. The runner intentionally exposes no cache_dir
+    /// setting because the underlying `Qwen3VLEmbedding::from_hf` API does
+    /// not accept one.
     pub fn load_from_hf(repo_id: &str) -> Result<Self> {
         let api = hf_hub::api::sync::ApiBuilder::from_env()
             .with_progress(false)
@@ -79,8 +79,7 @@ impl TokenizationProcessor {
     /// Implementation notes:
     /// - `tokenizers::Encoding::get_offsets()` reports byte offsets. We pair
     ///   them with a `CharByteMap` over the same text and reject any token
-    ///   whose offset falls inside a multi-byte sequence (specification.md
-    ///   §4.8.1).
+    ///   whose offset falls inside a multi-byte sequence.
     /// - Special tokens (BOS/EOS) typically yield `(0, 0)` from the
     ///   tokenizer. We propagate those spans unchanged so callers can detect
     ///   them by `char_start == char_end` if needed.

@@ -36,7 +36,7 @@ fn full_load_succeeds() {
         .embed_texts(&["hello"])
         .expect("embed_texts should succeed");
     assert_eq!(vectors.len(), 1);
-    // Qwen3-VL-Embedding-2B has 2048-dim output (specification.md §2.2).
+    // Qwen3-VL-Embedding-2B has 2048-dim output.
     assert_eq!(
         vectors[0].len(),
         2048,

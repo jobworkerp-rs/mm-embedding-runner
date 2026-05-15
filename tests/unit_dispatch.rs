@@ -49,7 +49,7 @@ fn malformed_args_yield_invalid_argument_even_before_load() {
 }
 
 // load() now downloads the actual Qwen3-VL-Embedding-2B weights from the
-// HuggingFace Hub (specification.md §4.5), so the success path requires
+// HuggingFace Hub, so the success path requires
 // network + several GiB of disk. The integration test
 // `tests/integration_backend_load.rs::full_load_succeeds` covers it.
 

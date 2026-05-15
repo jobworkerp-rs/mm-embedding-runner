@@ -17,7 +17,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 static LOADED_PLUGIN: OnceLock<Mutex<MmEmbeddingPlugin>> = OnceLock::new();
 
 // One loaded plugin per `cargo test` invocation so the multi-gig model
-// init runs once (specification.md §4.6: serial execution is fine for v0.1).
+// init runs once.
 fn shared_plugin() -> MutexGuard<'static, MmEmbeddingPlugin> {
     LOADED_PLUGIN
         .get_or_init(|| Mutex::new(load_test_plugin(vec![])))

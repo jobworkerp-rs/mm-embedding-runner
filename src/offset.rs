@@ -1,9 +1,9 @@
 //! Convert tokenizer byte offsets into char (Unicode scalar value) indices.
 //!
 //! `tokenizers::Encoding::get_offsets()` returns `(byte_start, byte_end)`
-//! pairs against the input string (specification.md §4.8.1). The runner's
-//! result protocol promises char-indexed `begin_position` / `end_position`
-//! (§3.6.1) so this module bridges the two.
+//! pairs against the input string, but the result protocol exposes
+//! char-indexed `begin_position` / `end_position`, so this module bridges
+//! the two.
 //!
 //! Conversion strategy:
 //! 1. Walk `text.char_indices()` once to build a sorted `Vec<usize>` mapping
