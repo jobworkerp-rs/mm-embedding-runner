@@ -67,15 +67,27 @@ fn missing_source_yields_invalid_argument() {
 }
 
 #[test]
-fn url_source_yields_invalid_argument() {
+fn non_http_url_scheme_is_rejected_without_network() {
+    // file://, data:, ftp:// etc. must be rejected by the scheme check
+    // before any network I/O happens.
     let s = settings_no_allowed_dirs();
-    let items = vec![ImageItem {
-        source: Some(ImageSource::Url("https://example.com/x.png".to_string())),
-        label: None,
-    }];
-    let err = prepare_images(&items, &s).unwrap_err();
-    assert!(err.to_string().starts_with("InvalidArgument:"));
-    assert!(err.to_string().contains("url source"));
+    for url in [
+        "file:///etc/passwd",
+        "ftp://example.com/x.png",
+        "data:image/png;base64,AAAA",
+        "javascript:alert(1)",
+    ] {
+        let items = vec![ImageItem {
+            source: Some(ImageSource::Url(url.to_string())),
+            label: None,
+        }];
+        let err = prepare_images(&items, &s).unwrap_err();
+        assert!(
+            err.to_string().starts_with("InvalidArgument:"),
+            "scheme {url} should be rejected, got: {err}"
+        );
+        assert!(err.to_string().contains("http or https"), "got: {err}");
+    }
 }
 
 #[test]

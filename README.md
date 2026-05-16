@@ -121,9 +121,19 @@ fastembed 5.13.4 の `Qwen3VLEmbedding` はソースレベルで `l2_normalize` 
 
 `file_path` は検証直後に `read_to_end` でメモリに読み込み、そのバイト列を embedding に使います。よって **embed 自体への TOCTOU は回避** されます。一方、`canonicalize` の時点とファイル open の時点の間で symlink を差し替えるレースは OS レベルの問題であり本ランナー単体では完全には防げません。許可ディレクトリは信頼可能なもののみに限定するのが利用側の責務です。
 
-### `url` ソースは v0.1 未対応
+### `url` ソース（http / https）
 
-`EmbedImageArgs.items[].url` は proto 上に予約されていますが、v0.1 では `InvalidArgument: url source is not supported in v0.1` を返します。
+`EmbedImageArgs.items[].url` は **http / https のみ**対応します。`file://` / `data:` / `ftp://` 等は、ネットワークアクセス前の scheme 検証で `InvalidArgument: url must use the http or https scheme` として拒否されます。
+
+取得時のガード:
+
+- リクエストタイムアウト 30 秒
+- リダイレクト上限 5 回
+- レスポンスの `Content-Length` が `image_size_limit_bytes` 超なら早期拒否
+- ボディは `image_size_limit_bytes + 1` バイトで打ち切り読み込み（`Content-Length` 詐称・欠落でも上限超過を検出）
+- 取得後は `data` ソースと同じ decode 後サイズ preflight に乗る
+
+**SSRF 対策は行いません。** プライベート IP / ループバック / リンクローカル / クラウドメタデータ（169.254.169.254 等）への到達をブロックしません。`url` ソースは**信頼できる呼び出し元からの入力にのみ**使用してください。任意ユーザ入力をそのまま渡すと内部ネットワークへのリクエストを誘発できます。SSRF を防ぐ責務は呼び出し側にあります。
 
 ---
 
@@ -146,6 +156,8 @@ cargo build --release --features cuda
 ```
 
 CUDA 版は CPU 版と別の `.so` として配布し、`lib<name>_cuda.so` にリネームして `cuda_runner/` ディレクトリに配置します（既存 CLAUDE.md「CUDA Shared Library Dependency - Final Solution」を踏襲）。プラグイン名は CPU/CUDA で同一（`MultimodalEmbeddingRunner`）です。
+
+HTTP(S)（hf-hub からの tokenizer 取得、`url` 画像ソース）の TLS は **rustls**（純 Rust 実装）を使い、`native-tls` / OpenSSL は依存ツリーから完全に排除しています。生成される `.so` の `NEEDED` に `libssl` / `libcrypto` は含まれず、ホストの OpenSSL バージョンに依存せず任意の Linux ランタイムイメージで `dlopen()` 可能です（CPU 版は libstdc++ / libgcc / libm / libc / ld-linux のみ、CUDA 版はそれに CUDA ランタイムが加わる）。
 
 `device = CUDA` を CUDA feature 無効のバイナリでロードすると `UnsupportedDevice:` を返します。自動 CPU フォールバックは行いません。
 

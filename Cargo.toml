@@ -1,7 +1,6 @@
 # Empty [workspace] table makes this crate an isolated workspace root,
-# preventing cargo from traversing up to the parent workspace. This keeps the
-# fastembed/candle-core dependency tree separate from the parent workspace's
-# llama-cpp-2 ecosystem (see specification.md §1.3).
+# preventing cargo from traversing up to a parent workspace. This keeps the
+# fastembed/candle-core dependency tree independent.
 [workspace]
 
 [package]
@@ -17,7 +16,7 @@ license = "MIT"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-# Git submodules under modules/, referenced by path (specification.md §4.8.2).
+# Git submodules under modules/, referenced by path.
 # Run `git submodule update --init --recursive` before building.
 jobworkerp-client = { path = "modules/jobworkerp-client" }
 command-utils    = { path = "modules/command-utils" }
@@ -25,25 +24,39 @@ command-utils    = { path = "modules/command-utils" }
 # Multimodal embedding backend. Pin exactly to ensure API stability against
 # the surface verified during planning (Qwen3VLEmbedding::from_hf, embed_texts,
 # embed_image_bytes).
-fastembed = { version = "=5.13.4", features = ["qwen3"] }
+#
+# default-features=false drops fastembed's default native-tls features
+# (hf-hub-native-tls + ort-download-binaries-native-tls). We re-enable the
+# rustls equivalents so neither the ONNX Runtime download nor hf-hub links
+# the host's libssl. image-models is re-added because the default set
+# included it (qwen3 already pulls `image`, but keep it explicit).
+fastembed = { version = "=5.13.4", default-features = false, features = [
+    "qwen3",
+    "image-models",
+    "hf-hub-rustls-tls",
+    "ort-download-binaries-rustls-tls",
+] }
 # Match fastembed's pinned candle-core to avoid duplicate compilation; feature
 # selection (cuda/metal) propagates from fastembed/* features.
 candle-core = "=0.10.2"
 
 # Image preflight (header sniff + dimension extraction) for zip-bomb defense
-# without invoking the full decoder. See specification.md §3.5.
+# without invoking the full decoder.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 # HuggingFace Hub for separately fetching tokenizer.json (Qwen3VLEmbedding
-# itself loads its own weights internally).
-hf-hub = "0.5"
+# itself loads its own weights internally). default-features=false drops the
+# native-tls default; rustls-tls keeps the resulting .so independent of the
+# host's libssl/libcrypto.
+hf-hub = { version = "0.5", default-features = false, features = ["tokio", "rustls-tls"] }
+
+# Blocking HTTP client for the url image source. rustls-tls (not native-tls)
+# so no libssl linkage; version matches the one hf-hub pulls in to keep the
+# dependency graph single-version.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
 # Tokenizer for char/byte offset accounting in chunking.
 tokenizers = "0.22"
-
-# Force vendored OpenSSL so the resulting .so does not depend on host libssl,
-# matching the policy used by the existing embedding-llm plugin.
-openssl = { version = "0.10", features = ["vendored"] }
 
 anyhow       = "1"
 async-trait  = "0.1"
@@ -63,7 +76,7 @@ prost-build = "0.14"
 [features]
 default = []
 # CUDA/Metal acceleration is passed through to fastembed which in turn
-# propagates to candle-core/candle-nn (see specification.md §4.3).
+# propagates to candle-core/candle-nn.
 cuda  = ["fastembed/cuda"]
 metal = ["fastembed/metal"]
 

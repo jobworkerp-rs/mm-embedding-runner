@@ -10,14 +10,21 @@ message EmbedImageArgs {
 }
 
 message ImageItem {
-  // Exactly one source must be set. The url variant is reserved on the wire
-  // for v0.2+, but is rejected with InvalidArgument in v0.1.
+  // Exactly one source must be set.
   oneof source {
+    // Local filesystem path. Only accepted if the path resolves under one
+    // of the runner's allowed_image_dirs; an empty allowed_image_dirs
+    // rejects all file_path inputs.
     string file_path = 1;
+    // Raw image bytes (PNG / JPEG / WebP).
     bytes  data      = 2;
+    // http or https URL. The runner fetches it with a request timeout and
+    // a redirect cap, enforcing image_size_limit_bytes on the response. It
+    // does NOT block private / loopback / metadata addresses, so only use
+    // url inputs from trusted callers.
     string url       = 3;
   }
-  // Optional human-readable identifier surfaced as the result's content field
-  // when present (otherwise file_path or "image[#i]" is used).
+  // Optional human-readable identifier surfaced as the result's content
+  // field when present (otherwise the file_path / url, or "image[#i]").
   optional string label = 4;
 }

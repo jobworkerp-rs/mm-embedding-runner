@@ -107,14 +107,79 @@ fn empty_items_rejected() {
 
 #[test]
 #[ignore]
-fn url_source_rejected() {
+fn non_http_url_scheme_rejected() {
     let mut plugin = shared_plugin();
     let items = vec![ImageItem {
-        source: Some(ImageSource::Url("https://example.com/x.png".to_string())),
+        source: Some(ImageSource::Url("file:///etc/passwd".to_string())),
         label: None,
     }];
     let args = EmbedImageArgs { items }.encode_to_vec();
     let (result, _) = plugin.run(args, HashMap::new(), Some(METHOD_EMBED_IMAGE));
     let err = result.expect_err("expected InvalidArgument");
     assert!(err.to_string().starts_with("InvalidArgument:"));
+    assert!(err.to_string().contains("http or https"), "got: {err}");
+}
+
+// Serve tests/fixtures/tiny_valid.png over a throwaway loopback HTTP server
+// and confirm the url source fetches + embeds it end to end.
+#[test]
+#[ignore]
+fn http_url_source_fetches_and_embeds() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let png = read_fixture_bytes("tiny_valid.png");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let body = png.clone();
+    let server = std::thread::spawn(move || {
+        // Single request, then exit.
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        // Drain the request until the header terminator so the response is
+        // not written before the client finished sending; bail on read
+        // error rather than racing ahead.
+        let mut req = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            match stream.read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => {
+                    req.push(byte[0]);
+                    if req.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                Err(_) => return,
+            }
+        }
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        if stream.write_all(header.as_bytes()).is_err() {
+            return;
+        }
+        let _ = stream.write_all(&body);
+        let _ = stream.flush();
+    });
+
+    let mut plugin = shared_plugin();
+    let items = vec![ImageItem {
+        source: Some(ImageSource::Url(format!(
+            "http://127.0.0.1:{port}/tiny_valid.png"
+        ))),
+        label: Some("from-url".to_string()),
+    }];
+    let out = run_embed_image(&mut plugin, items);
+    server.join().unwrap();
+
+    assert_eq!(out.embeddings.len(), 1);
+    let emb = &out.embeddings[0];
+    assert_eq!(emb.begin_position, 0);
+    assert_eq!(emb.end_position, 1);
+    assert_eq!(emb.content, "from-url");
+    assert_eq!(emb.values.len(), 2048);
+    assert_unit_norm(&emb.values);
 }
