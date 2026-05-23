@@ -56,10 +56,12 @@ impl TokenizationProcessor {
     /// initialization, but it does not expose the resulting `Tokenizer`, so
     /// the runner maintains its own copy for chunking accounting.
     ///
-    /// Cache directory is governed by the standard `HF_HOME` / `HF_HUB_CACHE`
-    /// environment variables. The runner intentionally exposes no cache_dir
-    /// setting because the underlying `Qwen3VLEmbedding::from_hf` API does
-    /// not accept one.
+    /// `ApiBuilder::from_env()` resolves the cache directory from `HF_HOME`
+    /// only (defaulting to `$HOME/.cache/huggingface/hub/`); `HF_ENDPOINT`
+    /// independently overrides the download base URL (mirror) and does not
+    /// affect cache placement. The model weights share this same cache (see
+    /// the vendored-fork note in Cargo.toml), so both co-locate under
+    /// `$HF_HOME/hub/`.
     pub fn load_from_hf(repo_id: &str) -> Result<Self> {
         let api = hf_hub::api::sync::ApiBuilder::from_env()
             .with_progress(false)

@@ -37,9 +37,10 @@ impl MmBackend {
         let device = build_device(settings.device, settings.gpu_device_index)?;
         let dtype = candle_dtype(settings.dtype);
 
-        // fastembed pulls model weights itself. We separately fetch
-        // tokenizer.json for our chunking accounting so we are not coupled
-        // to fastembed's private tokenizer instance.
+        // fastembed pulls model weights itself; we fetch tokenizer.json
+        // separately for our chunking accounting so we are not coupled to
+        // fastembed's private tokenizer instance. Both share one HF_HOME cache
+        // (see the vendored-fork note in Cargo.toml).
         let tokenizer = Arc::new(TokenizationProcessor::load_from_hf(
             &settings.tokenizer_model_id,
         )?);

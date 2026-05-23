@@ -139,9 +139,11 @@ fastembed 5.13.4 の `Qwen3VLEmbedding` はソースレベルで `l2_normalize` 
 
 ## 6. モデルロード
 
-`load()` は `Qwen3VLEmbedding::from_hf` で **HuggingFace Hub 経由のみ** モデルを取得します（v0.1 ではローカルパス直接ロード未対応）。重みをローカル保持したい場合は環境変数 `HF_HOME` / `HF_HUB_CACHE` で hf-hub のキャッシュ場所を制御してください。
+`load()` は `Qwen3VLEmbedding::from_hf` で **HuggingFace Hub 経由のみ** モデルを取得します（v0.1 ではローカルパス直接ロード未対応）。重みをローカル保持したい場合は環境変数 `HF_HOME` で hf-hub のキャッシュ場所を制御してください。`HF_HOME` を設定するとモデル重みは `$HF_HOME/hub/models--<org>--<name>/` に配置されます（未設定時は既定値 `$HOME/.cache/huggingface/hub/`）。`HF_ENDPOINT` は**キャッシュ場所ではなくダウンロード先のベース URL（ミラー等）を変える変数**であり、設定してもキャッシュ配置は変わりません（配置は引き続き `HF_HOME` が決定します）。
 
-char offset 計算用の tokenizer.json は fastembed とは別に hf-hub 経由で取得します（`tokenizer_model_id` 未指定時は `model_id` と同じものを使用）。
+> **注**: upstream の fastembed 5.13.4 の `from_hf` は `HF_HOME` を無視し常に `$HOME/.cache/huggingface/hub` を使うバグがあります。本クレートは `[patch.crates-io]` で vendored fork（`modules/fastembed`）に差し替え、weights も `HF_HOME` を尊重するよう修正しています（後述の tokenizer.json と同じ `$HF_HOME/hub/` に集約）。
+
+char offset 計算用の tokenizer.json は fastembed とは別に hf-hub 経由で取得します（`tokenizer_model_id` 未指定時は `model_id` と同じものを使用）。weights と同じ `HF_HOME` キャッシュを共有します。
 
 ---
 

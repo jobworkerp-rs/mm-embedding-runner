@@ -75,3 +75,24 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     }
     dot / (norm_a.sqrt() * norm_b.sqrt())
 }
+
+/// Run `body` with `HF_HOME` set to `value`, restoring the previous value
+/// afterwards even if `body` panics. `HF_HOME` is process-global, so callers
+/// must run single-threaded (`--test-threads=1`).
+pub fn with_hf_home<R>(value: &std::path::Path, body: impl FnOnce() -> R) -> R {
+    let prev = std::env::var_os("HF_HOME");
+    unsafe {
+        std::env::set_var("HF_HOME", value);
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("HF_HOME", v),
+            None => std::env::remove_var("HF_HOME"),
+        }
+    }
+    match result {
+        Ok(r) => r,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}

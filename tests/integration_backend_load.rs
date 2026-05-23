@@ -5,6 +5,9 @@
 //! `cargo test --test integration_backend_load -- --ignored` once HF_HOME is
 //! warm.
 
+mod common;
+
+use common::with_hf_home;
 use mm_embedding_runner::backend::MmBackend;
 use mm_embedding_runner::settings::{
     DTypeKind, DecodedImageBytesLimit, DeviceKind, ResolvedChunkingConfig, ValidatedSettings,
@@ -47,6 +50,36 @@ fn full_load_succeeds() {
     assert!(
         (norm_sq - 1.0).abs() < 1e-3,
         "expected unit-norm embedding, got norm_sq={norm_sq}",
+    );
+}
+
+/// End-to-end proof of the HF_HOME fix: with `HF_HOME` pointed at a fresh
+/// directory, loading the backend must materialize the model weights under
+/// `$HF_HOME/hub/models--Qwen--Qwen3-VL-Embedding-2B/`, the same tree the
+/// tokenizer uses. Before the vendored-fork patch, `Qwen3VLEmbedding::from_hf`
+/// pinned weights to `$HOME/.cache/huggingface/hub` and ignored `HF_HOME`.
+///
+/// Requires a real model download (and practically a GPU), so it is `#[ignore]`
+/// and out of the per-PR lane. `HF_HOME` is process-global, so run with
+/// `--test-threads=1`.
+#[test]
+#[ignore]
+fn weights_land_under_hf_home() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hf_home = tmp.path().join("models");
+
+    with_hf_home(&hf_home, || {
+        MmBackend::load(default_settings()).expect("model should load under HF_HOME");
+    });
+
+    // hf-hub lays the repo out as $HF_HOME/hub/models--<org>--<name>/.
+    let repo_dir = hf_home
+        .join("hub")
+        .join("models--Qwen--Qwen3-VL-Embedding-2B");
+    assert!(
+        repo_dir.is_dir(),
+        "weights should materialize under HF_HOME at {}",
+        repo_dir.display()
     );
 }
 
