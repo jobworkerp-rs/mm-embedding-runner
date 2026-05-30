@@ -1,6 +1,11 @@
-use jobworkerp_client::plugins::MultiMethodPluginRunner;
+use jobworkerp_client::jobworkerp::data::MethodSchema;
+use jobworkerp_plugin_abi::v2::PluginV2;
 use mm_embedding_runner::{METHOD_EMBED_IMAGE, METHOD_EMBED_TEXT, MmEmbeddingPlugin, RUNNER_NAME};
+use prost::Message;
 use std::collections::HashMap;
+
+mod common;
+use common::{block_on, run_method};
 
 #[test]
 fn name_matches_constant() {
@@ -17,7 +22,7 @@ fn description_is_non_empty() {
 #[test]
 fn run_without_method_yields_invalid_argument() {
     let mut plugin = MmEmbeddingPlugin::new();
-    let (result, _meta) = plugin.run(vec![], HashMap::new(), None);
+    let (result, _meta) = block_on(plugin.run(vec![], HashMap::new(), None));
     let err = result.expect_err("expected InvalidArgument");
     assert!(
         err.to_string().starts_with("InvalidArgument:"),
@@ -28,7 +33,8 @@ fn run_without_method_yields_invalid_argument() {
 #[test]
 fn run_with_unknown_method_yields_invalid_argument() {
     let mut plugin = MmEmbeddingPlugin::new();
-    let (result, _meta) = plugin.run(vec![], HashMap::new(), Some("frobnicate"));
+    let (result, _meta) =
+        block_on(plugin.run(vec![], HashMap::new(), Some("frobnicate".to_string())));
     let err = result.expect_err("expected InvalidArgument");
     assert!(
         err.to_string().starts_with("InvalidArgument:"),
@@ -39,9 +45,8 @@ fn run_with_unknown_method_yields_invalid_argument() {
 #[test]
 fn run_without_load_yields_not_loaded() {
     let mut plugin = MmEmbeddingPlugin::new();
-    let (result, _meta) = plugin.run(vec![], HashMap::new(), Some(METHOD_EMBED_TEXT));
-    let err = result.expect_err("expected NotLoaded");
-    assert!(err.to_string().starts_with("NotLoaded:"), "got: {err}");
+    let err = run_method(&mut plugin, METHOD_EMBED_TEXT, vec![]).expect_err("expected NotLoaded");
+    assert!(err.starts_with("NotLoaded:"), "got: {err}");
 }
 
 #[test]
@@ -59,7 +64,11 @@ fn method_proto_map_marks_non_streaming() {
     let map = plugin.method_proto_map();
     let non_streaming =
         jobworkerp_client::jobworkerp::data::StreamingOutputType::NonStreaming as i32;
-    for (name, schema) in &map {
+    for (name, encoded) in &map {
+        // PluginV2 exchanges schemas as protobuf-encoded bytes; decode back
+        // into the host type to assert on field values.
+        let schema = MethodSchema::decode(&encoded[..])
+            .unwrap_or_else(|e| panic!("method {name}: schema decode: {e}"));
         assert_eq!(
             schema.output_type, non_streaming,
             "method {name} should be non-streaming",
@@ -105,8 +114,29 @@ fn runner_settings_proto_returns_proto_text() {
 }
 
 #[test]
-fn cancel_returns_false() {
+fn set_cancellation_token_does_not_panic() {
+    // Sanity check: set_cancellation_token must accept a CancelToken without
+    // requiring a runtime; the host invokes it on every job.
+    use jobworkerp_plugin_abi::cancel::FfiCancellationToken;
+    use jobworkerp_plugin_abi::v2::CancelToken;
     let mut plugin = MmEmbeddingPlugin::new();
-    assert!(!plugin.cancel());
-    assert!(!plugin.is_canceled());
+    let (ffi, _handle) = FfiCancellationToken::new_owned();
+    plugin.set_cancellation_token(CancelToken::from_ffi(ffi));
+}
+
+#[test]
+fn run_stream_is_unsupported() {
+    use jobworkerp_plugin_abi::sink::OutputSink;
+    use jobworkerp_plugin_abi::v2::HighLevelSink;
+    let mut plugin = MmEmbeddingPlugin::new();
+    let (tx, _rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+    let sink = HighLevelSink::from_ffi(OutputSink::from_sender(tx));
+    let err = block_on(plugin.run_stream(
+        vec![],
+        HashMap::new(),
+        Some(METHOD_EMBED_TEXT.to_string()),
+        sink,
+    ))
+    .expect_err("expected streaming-unsupported error");
+    assert!(err.starts_with("InvalidArgument:"), "got: {err}");
 }

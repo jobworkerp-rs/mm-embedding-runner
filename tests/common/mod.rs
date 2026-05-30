@@ -6,7 +6,7 @@
 
 #![allow(dead_code)] // each test binary uses a different subset
 
-use jobworkerp_client::plugins::MultiMethodPluginRunner;
+use jobworkerp_plugin_abi::v2::PluginV2;
 use mm_embedding_runner::MmEmbeddingPlugin;
 use mm_embedding_runner::protobuf::mm_embedding::{Device, MultimodalEmbeddingRunnerSettings};
 use prost::Message;
@@ -36,21 +36,65 @@ pub fn test_device() -> i32 {
     }
 }
 
-/// Build and load a plugin with the standard test settings, optionally
-/// whitelisting directories for the `file_path` image source.
-pub fn load_test_plugin(allowed_image_dirs: Vec<String>) -> MmEmbeddingPlugin {
+/// Build and load a plugin with the standard test settings against
+/// `model_id`, optionally whitelisting directories for the `file_path`
+/// image source. V2 `load` is async; tests outside the plugin's own
+/// runtime drive it via a short-lived tokio runtime so the helper can
+/// stay synchronous.
+pub fn load_plugin_with_model(
+    model_id: &str,
+    allowed_image_dirs: Vec<String>,
+) -> MmEmbeddingPlugin {
     let mut plugin = MmEmbeddingPlugin::new();
     let settings = MultimodalEmbeddingRunnerSettings {
-        model_id: "Qwen/Qwen3-VL-Embedding-2B".to_string(),
+        model_id: model_id.to_string(),
         max_sequence_length: 512,
         device: test_device(),
         allowed_image_dirs,
         ..Default::default()
     };
-    plugin
-        .load(settings.encode_to_vec())
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test driver runtime");
+    rt.block_on(plugin.load(settings.encode_to_vec()))
         .expect("model should load for integration tests");
     plugin
+}
+
+/// Convenience wrapper that loads the default multimodal model
+/// (`Qwen/Qwen3-VL-Embedding-2B`) — used by every legacy integration
+/// test written before the multi-architecture branch.
+pub fn load_test_plugin(allowed_image_dirs: Vec<String>) -> MmEmbeddingPlugin {
+    load_plugin_with_model("Qwen/Qwen3-VL-Embedding-2B", allowed_image_dirs)
+}
+
+/// Drive a `PluginV2` async method from a sync test body. Each call builds
+/// a private current-thread runtime so concurrent test cases (and the
+/// plugin's own internal runtime, when load() builds one) never share
+/// reactor state — that sharing would otherwise mask leaks between cases.
+pub fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test driver runtime")
+        .block_on(fut)
+}
+
+/// `block_on(plugin.run(args, {}, Some(method)))` wrapper used by every
+/// test that calls `run` — folds the `.to_string()` + empty-metadata noise
+/// at the call site.
+pub fn run_method(
+    plugin: &mut MmEmbeddingPlugin,
+    method: &str,
+    args: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    block_on(plugin.run(
+        args,
+        std::collections::HashMap::new(),
+        Some(method.to_string()),
+    ))
+    .0
 }
 
 /// fastembed always L2-normalizes, so every produced vector must have unit

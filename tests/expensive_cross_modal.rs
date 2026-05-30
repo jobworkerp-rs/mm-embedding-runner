@@ -7,14 +7,12 @@
 
 mod common;
 
-use common::{FIXTURES, cosine, load_test_plugin};
-use jobworkerp_client::plugins::MultiMethodPluginRunner;
+use common::{FIXTURES, cosine, load_test_plugin, run_method};
 use mm_embedding_runner::protobuf::mm_embedding::{
     EmbedImageArgs, EmbedTextArgs, ImageItem, MmEmbeddingResult, image_item::Source as ImageSource,
 };
 use mm_embedding_runner::{METHOD_EMBED_IMAGE, METHOD_EMBED_TEXT, MmEmbeddingPlugin};
 use prost::Message;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 fn embed_text(plugin: &mut MmEmbeddingPlugin, text: &str) -> Vec<f32> {
@@ -22,8 +20,7 @@ fn embed_text(plugin: &mut MmEmbeddingPlugin, text: &str) -> Vec<f32> {
         text: text.to_string(),
     }
     .encode_to_vec();
-    let (result, _) = plugin.run(args, HashMap::new(), Some(METHOD_EMBED_TEXT));
-    let bytes = result.expect("embed_text");
+    let bytes = run_method(plugin, METHOD_EMBED_TEXT, args).expect("embed_text");
     let parsed = MmEmbeddingResult::decode(&bytes[..]).unwrap();
     parsed.embeddings[0].values.clone()
 }
@@ -36,8 +33,7 @@ fn embed_image(plugin: &mut MmEmbeddingPlugin, bytes: Vec<u8>) -> Vec<f32> {
         }],
     }
     .encode_to_vec();
-    let (result, _) = plugin.run(args, HashMap::new(), Some(METHOD_EMBED_IMAGE));
-    let bytes = result.expect("embed_image");
+    let bytes = run_method(plugin, METHOD_EMBED_IMAGE, args).expect("embed_image");
     let parsed = MmEmbeddingResult::decode(&bytes[..]).unwrap();
     parsed.embeddings[0].values.clone()
 }

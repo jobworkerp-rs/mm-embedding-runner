@@ -20,6 +20,16 @@ pub enum MmEmbeddingError {
 
     #[error("UnsupportedDevice: {0}")]
     UnsupportedDevice(String),
+
+    // Returned by `load` when the target HF repo's `config.json`
+    // `architectures[0]` is not one this runner supports.
+    #[error("UnsupportedModel: {architecture}")]
+    UnsupportedModel { architecture: String },
+
+    // Surfaced when a cooperative cancellation token observes `cancel()`
+    // before the underlying work completes.
+    #[error("Cancelled: {0}")]
+    Cancelled(String),
 }
 
 pub type Result<T> = std::result::Result<T, MmEmbeddingError>;
@@ -39,6 +49,16 @@ impl MmEmbeddingError {
 
     pub fn unsupported_device<S: Into<String>>(msg: S) -> Self {
         Self::UnsupportedDevice(msg.into())
+    }
+
+    pub fn unsupported_model<S: Into<String>>(architecture: S) -> Self {
+        Self::UnsupportedModel {
+            architecture: architecture.into(),
+        }
+    }
+
+    pub fn cancelled<S: Into<String>>(msg: S) -> Self {
+        Self::Cancelled(msg.into())
     }
 }
 
@@ -88,6 +108,20 @@ mod tests {
     fn unsupported_device_prefix() {
         let err = MmEmbeddingError::unsupported_device("cuda feature disabled");
         assert!(err.to_string().starts_with("UnsupportedDevice:"));
+    }
+
+    #[test]
+    fn unsupported_model_prefix() {
+        let err = MmEmbeddingError::unsupported_model("ModernBertModel");
+        let s = err.to_string();
+        assert!(s.starts_with("UnsupportedModel:"));
+        assert!(s.contains("ModernBertModel"));
+    }
+
+    #[test]
+    fn cancelled_prefix() {
+        let err = MmEmbeddingError::cancelled("run cancelled");
+        assert!(err.to_string().starts_with("Cancelled:"));
     }
 
     #[test]

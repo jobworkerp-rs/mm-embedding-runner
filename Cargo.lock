@@ -226,6 +226,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-ffi"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4de21c0feef7e5a556e51af767c953f0501f7f300ba785cc99c47bdc8081a50"
+
+[[package]]
 name = "async-io"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2698,6 +2704,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "jobworkerp-plugin-abi"
+version = "0.1.0"
+source = "git+https://github.com/jobworkerp-rs/jobworkerp-rs.git?branch=main#08158346f978be159f71a11b77ea408e598afe0a"
+dependencies = [
+ "async-ffi",
+ "async-trait",
+ "futures",
+ "jobworkerp-plugin-abi-macros",
+ "libloading 0.9.0",
+ "prost",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "jobworkerp-plugin-abi-macros"
+version = "0.1.0"
+source = "git+https://github.com/jobworkerp-rs/jobworkerp-rs.git?branch=main#08158346f978be159f71a11b77ea408e598afe0a"
+dependencies = [
+ "proc-macro2",
+ "quote 1.0.45",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3027,6 +3058,7 @@ dependencies = [
  "hf-hub",
  "image",
  "jobworkerp-client",
+ "jobworkerp-plugin-abi",
  "once_cell",
  "prost",
  "prost-build",
@@ -5250,6 +5282,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

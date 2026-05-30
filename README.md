@@ -1,6 +1,6 @@
 # mm-embedding-runner
 
-画像とテキストを **同一の検索可能ベクトル空間** へ写像できるマルチモーダル embedding を、jobworkerp の `MultiMethodPluginRunner` プラグインとして提供する独立 crate です。
+画像とテキストを **同一の検索可能ベクトル空間** へ写像できるマルチモーダル embedding を、jobworkerp の V2 plugin ABI (`PluginV2` trait、エクスポートシンボル `load_multi_method_plugin_v2`) として提供する独立 crate です。協調的キャンセル (`CancelToken`) に対応しており、タイムアウト発火時はホストに `Cancelled:` を即時返してジョブループを解放します。
 
 - 仕様: [`../ai-docs/mm-embedding/specification.md`](../ai-docs/mm-embedding/specification.md)（WHAT）
 - 実装計画: [`../ai-docs/mm-embedding/implementation-plan.md`](../ai-docs/mm-embedding/implementation-plan.md)（HOW）

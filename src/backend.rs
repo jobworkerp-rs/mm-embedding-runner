@@ -2,28 +2,50 @@
 //!
 //! The backend is constructed in `load()`, not at plugin construction, so
 //! the plugin can be discovered and have its metadata queried on hosts
-//! without CUDA / candle available. Once loaded, the same
-//! `Qwen3VLEmbedding` instance serves both `embed_text` and `embed_image`,
-//! so their vectors share one space and are directly comparable.
+//! without CUDA / candle available.
+//!
+//! The wrapped fastembed model is one of two architectures, selected from
+//! the target repo's `config.json::architectures[0]` (see [`crate::model_arch`]):
+//!
+//! - `Qwen3VLForConditionalGeneration` -> [`Qwen3VLEmbedding`], which serves
+//!   both `embed_text` and `embed_image` from a single instance, so their
+//!   vectors share one space and are directly comparable.
+//! - `Qwen3ForCausalLM` -> [`Qwen3TextEmbedding`], text-only. Calls to
+//!   `embed_image_bytes` on this variant return an `InvalidArgument:`
+//!   error (no silent empty vector, no fallback).
 
 use std::sync::Arc;
 
 use candle_core::{DType as CandleDType, Device as CandleDevice};
-use fastembed::Qwen3VLEmbedding;
+use fastembed::{Qwen3TextEmbedding, Qwen3VLEmbedding};
+use hf_hub::api::sync::ApiBuilder;
 
 use crate::error::{MmEmbeddingError, Result};
+use crate::model_arch::{ArchitectureKind, detect_architecture};
 use crate::settings::{DTypeKind, DeviceKind, ValidatedSettings};
 use crate::tokenization::TokenizationProcessor;
 
+// fastembed embedding structs are large; box both variants so the enum
+// discriminant size is not driven by the bigger one.
+enum InnerBackend {
+    Qwen3Vl(Box<Qwen3VLEmbedding>),
+    Qwen3Text(Box<Qwen3TextEmbedding>),
+}
+
 pub struct MmBackend {
-    model: Qwen3VLEmbedding,
+    inner: InnerBackend,
     tokenizer: Arc<TokenizationProcessor>,
     settings: ValidatedSettings,
 }
 
 impl std::fmt::Debug for MmBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let arch = match self.inner {
+            InnerBackend::Qwen3Vl(_) => "Qwen3Vl",
+            InnerBackend::Qwen3Text(_) => "Qwen3Text",
+        };
         f.debug_struct("MmBackend")
+            .field("architecture", &arch)
             .field("model_id", &self.settings.model_id)
             .field("device", &self.settings.device)
             .field("dtype", &self.settings.dtype)
@@ -45,21 +67,48 @@ impl MmBackend {
             &settings.tokenizer_model_id,
         )?);
 
-        let model = Qwen3VLEmbedding::from_hf(
-            &settings.model_id,
-            &device,
-            dtype,
-            settings.max_sequence_length as usize,
-        )
-        .map_err(|e| {
-            MmEmbeddingError::backend(format!(
-                "Qwen3VLEmbedding::from_hf failed for {}: {e}",
-                settings.model_id
-            ))
-        })?;
+        // hf-hub here shares the HF_HOME cache that fastembed's own
+        // loader will hit for the same config.json, so the bytes are read
+        // once on cold start and once from the cache.
+        let api = ApiBuilder::from_env()
+            .build()
+            .map_err(|e| MmEmbeddingError::backend(format!("hf api init failed: {e}")))?;
+        let repo = api.model(settings.model_id.clone());
+        let arch = detect_architecture(&repo)?;
+
+        let inner = match arch {
+            ArchitectureKind::Qwen3Vl => InnerBackend::Qwen3Vl(Box::new(
+                Qwen3VLEmbedding::from_hf(
+                    &settings.model_id,
+                    &device,
+                    dtype,
+                    settings.max_sequence_length as usize,
+                )
+                .map_err(|e| {
+                    MmEmbeddingError::backend(format!(
+                        "Qwen3VLEmbedding::from_hf failed for {}: {e}",
+                        settings.model_id
+                    ))
+                })?,
+            )),
+            ArchitectureKind::Qwen3Text => InnerBackend::Qwen3Text(Box::new(
+                Qwen3TextEmbedding::from_hf(
+                    &settings.model_id,
+                    &device,
+                    dtype,
+                    settings.max_sequence_length as usize,
+                )
+                .map_err(|e| {
+                    MmEmbeddingError::backend(format!(
+                        "Qwen3TextEmbedding::from_hf failed for {}: {e}",
+                        settings.model_id
+                    ))
+                })?,
+            )),
+        };
 
         Ok(Self {
-            model,
+            inner,
             tokenizer,
             settings,
         })
@@ -75,22 +124,53 @@ impl MmBackend {
         self.tokenizer.clone()
     }
 
+    /// True when the loaded model can produce image embeddings comparable
+    /// to its text embeddings (Qwen3-VL only). Text-only checkpoints
+    /// (Qwen3-Embedding-*) return false; the runtime uses this to reject
+    /// `embed_image` calls before any blocking work is scheduled.
+    #[must_use]
+    pub fn supports_vision(&self) -> bool {
+        matches!(self.inner, InnerBackend::Qwen3Vl(_))
+    }
+
+    /// Output dimension of this model, taken from the loaded checkpoint's
+    /// `Config::hidden_size` rather than hard-coded — so `ModelInfo`
+    /// tracks the actual model across architectures and checkpoint sizes.
+    #[must_use]
+    pub fn embedding_dimension(&self) -> usize {
+        match &self.inner {
+            InnerBackend::Qwen3Vl(m) => m.config().hidden_size,
+            InnerBackend::Qwen3Text(m) => m.config().hidden_size,
+        }
+    }
+
     /// Batch text embedding. Takes `&[&str]` so callers can pass borrowed
     /// chunk content without cloning it into owned `String`s.
     pub fn embed_texts(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        self.model
-            .embed_texts(texts)
-            .map_err(|e| MmEmbeddingError::backend(format!("embed_texts failed: {e}")))
+        let raw = match &self.inner {
+            InnerBackend::Qwen3Vl(m) => m.embed_texts(texts),
+            InnerBackend::Qwen3Text(m) => m.embed(texts),
+        };
+        raw.map_err(|e| MmEmbeddingError::backend(format!("embed_texts failed: {e}")))
     }
 
     /// Batch image embedding from raw bytes. We never call fastembed's
     /// path-based `embed_images` because it would re-open the file after our
     /// validation step, opening a TOCTOU window; passing the already-read
     /// bytes closes that window.
+    ///
+    /// Returns `InvalidArgument:` for text-only backends, preserving the
+    /// capability check at the backend boundary as well as upstream.
     pub fn embed_image_bytes(&self, images: &[&[u8]]) -> Result<Vec<Vec<f32>>> {
-        self.model
-            .embed_image_bytes(images)
-            .map_err(|e| MmEmbeddingError::backend(format!("embed_image_bytes failed: {e}")))
+        match &self.inner {
+            InnerBackend::Qwen3Vl(m) => m
+                .embed_image_bytes(images)
+                .map_err(|e| MmEmbeddingError::backend(format!("embed_image_bytes failed: {e}"))),
+            InnerBackend::Qwen3Text(_) => Err(MmEmbeddingError::invalid_argument(
+                "embed_image is not supported for text-only model architectures \
+                 (Qwen3ForCausalLM); use embed_text only",
+            )),
+        }
     }
 }
 

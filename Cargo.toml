@@ -12,14 +12,25 @@ description = "Multimodal embedding plugin (text + image) backed by fastembed-rs
 repository = "https://github.com/jobworkerp-rs/llama-plugins"
 license = "MIT"
 
+# v2 plugin uses dylib: the proc-macro-generated #[repr(C)] vtable thunks
+# emitted by `register_plugin_v2!` are the ABI surface, so the host and plugin
+# can use independent rustc versions. `dylib` matches the V2 reference plugin
+# (`cancel_test`). The produced library file name (`libmm_embedding_runner.so`)
+# is unchanged from the previous `cdylib`, so distribution paths are unaffected.
 [lib]
-crate-type = ["cdylib", "lib"]
+crate-type = ["dylib", "lib"]
 
 [dependencies]
 # Git submodules under modules/, referenced by path.
 # Run `git submodule update --init --recursive` before building.
 jobworkerp-client = { path = "modules/jobworkerp-client" }
 command-utils    = { path = "modules/command-utils" }
+
+# V2 plugin ABI: provides `PluginV2` trait, `CancelToken`, `HighLevelSink`, and
+# re-exports `register_plugin_v2!`. Pinned via git source per the V2 manual; the
+# only exact-pin contract this transitively enforces is `async-ffi = "=0.5.0"`.
+# Tokio version is free to drift from the host.
+jobworkerp-plugin-abi = { git = "https://github.com/jobworkerp-rs/jobworkerp-rs.git", branch = "main", package = "jobworkerp-plugin-abi" }
 
 # Multimodal embedding backend. Pin exactly to ensure API stability against
 # the surface verified during planning (Qwen3VLEmbedding::from_hf, embed_texts,
@@ -74,7 +85,7 @@ schemars     = { version = "1.0.4", features = ["chrono04"] }
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
 thiserror    = "2"
-tokio        = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio        = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing      = "0.1"
 dotenvy      = "0.15"
 once_cell    = "1"

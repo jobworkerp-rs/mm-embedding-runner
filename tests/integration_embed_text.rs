@@ -5,12 +5,10 @@
 
 mod common;
 
-use common::{FIXTURES, assert_unit_norm, load_test_plugin};
-use jobworkerp_client::plugins::MultiMethodPluginRunner;
+use common::{FIXTURES, assert_unit_norm, load_test_plugin, run_method};
 use mm_embedding_runner::protobuf::mm_embedding::{EmbedTextArgs, MmEmbeddingResult};
 use mm_embedding_runner::{METHOD_EMBED_TEXT, MmEmbeddingPlugin};
 use prost::Message;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -30,8 +28,7 @@ fn run_embed_text(plugin: &mut MmEmbeddingPlugin, text: &str) -> MmEmbeddingResu
         text: text.to_string(),
     }
     .encode_to_vec();
-    let (result, _meta) = plugin.run(args, HashMap::new(), Some(METHOD_EMBED_TEXT));
-    let bytes = result.expect("embed_text should succeed");
+    let bytes = run_method(plugin, METHOD_EMBED_TEXT, args).expect("embed_text should succeed");
     MmEmbeddingResult::decode(&bytes[..]).unwrap()
 }
 
@@ -64,12 +61,9 @@ fn empty_text_is_rejected() {
         text: "   ".to_string(),
     }
     .encode_to_vec();
-    let (result, _) = plugin.run(args, HashMap::new(), Some(METHOD_EMBED_TEXT));
-    let err = result.expect_err("expected InvalidArgument");
-    assert!(
-        err.to_string().starts_with("InvalidArgument:"),
-        "got: {err}",
-    );
+    let err =
+        run_method(&mut plugin, METHOD_EMBED_TEXT, args).expect_err("expected InvalidArgument");
+    assert!(err.starts_with("InvalidArgument:"), "got: {err}");
 }
 
 #[test]
