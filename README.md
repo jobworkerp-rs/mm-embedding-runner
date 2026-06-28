@@ -1,54 +1,86 @@
 # mm-embedding-runner
 
-画像とテキストを **同一の検索可能ベクトル空間** へ写像できるマルチモーダル embedding を、jobworkerp の V2 plugin ABI (`PluginV2` trait、エクスポートシンボル `load_multi_method_plugin_v2`) として提供する独立 crate です。協調的キャンセル (`CancelToken`) に対応しており、タイムアウト発火時はホストに `Cancelled:` を即時返してジョブループを解放します。
+A multimodal embedding plugin that maps text and images into the **same vector space**. It can be used for cross-modal search and similarity comparison between text and images.
 
-- 仕様: [`../ai-docs/mm-embedding/specification.md`](../ai-docs/mm-embedding/specification.md)（WHAT）
-- 実装計画: [`../ai-docs/mm-embedding/implementation-plan.md`](../ai-docs/mm-embedding/implementation-plan.md)（HOW）
+This runs as a V2 plugin (`.so` shared library) for [jobworkerp-rs](https://github.com/jobworkerp-rs/jobworkerp-rs). It is not a standalone server or CLI; load it from a jobworkerp host.
 
----
+- Backend: [`Qwen/Qwen3-VL-Embedding-2B`](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) (2048 dimensions, Apache 2.0), executed through [fastembed-rs](https://crates.io/crates/fastembed)
+- Inference devices: CPU / CUDA / Metal (candle backend)
 
-## 1. モデル選定理由
+## Features
 
-**主モデル: `Qwen/Qwen3-VL-Embedding-2B`**
+| Method (`using`) | Input | Purpose |
+|---|---|---|
+| `embed_text` | Text | Text embeddings, with automatic chunking for long input |
+| `embed_image` | Images (bytes / file paths / URLs) | Image embeddings |
 
-- Qwen3-VL ベースの multimodal embedding 専用 fine-tune。ベクトル次元 2048、モデル上限 32K トークン、Instruction Aware、Apache 2.0
-- バックエンドに [`fastembed-rs`](https://crates.io/crates/fastembed)（`qwen3` feature、`=5.13.4` で pin）を採用。Rust ネイティブで candle backend により CUDA/Metal が利用可能
+Both methods share the **same model instance** internally, so their output vectors can be compared directly. Outputs are always L2-normalized (norm ~= 1).
 
-### ベクトル空間整合性の根拠
+## Protobuf Definitions
 
-`fastembed::Qwen3VLEmbedding` は単一構造体で `embed_texts` / `embed_image_bytes` を同時に公開しています。本ランナーは `load()` で **1 つの `Qwen3VLEmbedding` インスタンスを構築し、`embed_text` / `embed_image` 両 method がその単一インスタンスを共有** します。これにより、テキスト経路と画像経路が確実に同じ重み・同じ device・同じ dtype を使うことを構造上保証しています。
+The `.proto` files under `protobuf/` are the authoritative definitions for plugin settings, method arguments, and method output.
 
----
+| Purpose | Protobuf | Summary |
+|---|---|---|
+| Load-time settings | [`protobuf/mm_embedding_settings.proto`](protobuf/mm_embedding_settings.proto) | `MultimodalEmbeddingRunnerSettings`: model ID, device, dtype, chunking, image input limits, and related options |
+| `embed_text` arguments | [`protobuf/embed_text_args.proto`](protobuf/embed_text_args.proto) | `EmbedTextArgs`: text to embed |
+| `embed_image` arguments | [`protobuf/embed_image_args.proto`](protobuf/embed_image_args.proto) | `EmbedImageArgs`: image `data` / `file_path` / `url`, plus an optional `label` |
+| Shared output | [`protobuf/mm_embedding_result.proto`](protobuf/mm_embedding_result.proto) | `MmEmbeddingResult`: embedding vectors, position metadata, and model information |
 
-## 2. method 一覧
+## Quick Start
 
-| `using` 値 | 用途 | Args | Result |
-|---|---|---|---|
-| `"embed_text"` | テキスト embedding（長文は chunking） | `EmbedTextArgs` | `MmEmbeddingResult` |
-| `"embed_image"` | 画像 embedding | `EmbedImageArgs` | `MmEmbeddingResult` |
+### 1. Build
 
-両 method とも非ストリーミング（`NON_STREAMING`）、client streaming 不要。`using = None` や未知の値は `InvalidArgument:` を返し、`embed_text` へのフォールバックはしません。
+This repository uses git submodules, so fetch them after cloning.
 
-### JSON / proto 例
+```bash
+git clone <this-repo>
+cd mm-embedding-runner
+git submodule update --init --recursive
 
-`embed_text` の入力:
+cargo build --release                  # CPU build -> target/release/libmm_embedding_runner.so
+cargo build --release --features cuda   # CUDA build (separate binary)
+```
+
+### 2. Register with jobworkerp
+
+Place the generated `libmm_embedding_runner.so` in the jobworkerp host plugin directory. The host loads it with `dlopen` and exposes two methods under the plugin name `MultimodalEmbeddingRunner`.
+
+### 3. Load-Time Settings
+
+Settings are supplied once when the plugin is loaded. Main fields:
+
+| Field | Default | Description |
+|---|---|---|
+| `model_id` | Required | HuggingFace repository ID, for example `Qwen/Qwen3-VL-Embedding-2B` |
+| `device` | `CPU` | `CPU` / `CUDA` / `METAL` |
+| `max_sequence_length` | `2048` | Token limit (16 to 32768) |
+| `allowed_image_dirs` | `[]` | Directories allowed for `file_path` image inputs. If empty, all `file_path` inputs are rejected |
+| `image_size_limit_bytes` | 10 MiB | Compressed input size limit per image |
+
+> Model weights are not included in the distribution. They are downloaded from HuggingFace Hub on first load. Set `HF_HOME` to control the cache location; otherwise the default is `$HOME/.cache/huggingface/hub/`.
+
+### 4. Call Examples
+
+Input for `embed_text` (`using = "embed_text"`):
 
 ```json
 { "text": "a cat" }
 ```
 
-`embed_image` の入力（バイナリ／ファイルパス／ラベル）:
+Input for `embed_image` (`using = "embed_image"`):
 
 ```json
 {
   "items": [
     { "data": "<image bytes>", "label": "photo-1" },
-    { "file_path": "/srv/images/cat.png" }
+    { "file_path": "/srv/images/cat.png" },
+    { "url": "https://example.com/cat.png" }
   ]
 }
 ```
 
-出力（両 method 共通の `MmEmbeddingResult`）:
+Shared `MmEmbeddingResult` output:
 
 ```json
 {
@@ -58,186 +90,48 @@
   "model_info": {
     "model_name": "Qwen/Qwen3-VL-Embedding-2B",
     "embedding_dimension": 2048,
-    "dtype_used": "F32",
-    "supports_vision": true,
-    "supports_audio": false
+    "supports_vision": true
   }
 }
 ```
 
-`MmEmbeddingResult` は既存 `embedding-llm` の `EmbeddingLlmResult` と **JSON shape 互換・protobuf wire 互換** です（型名は区別されます）。
+`begin_position` / `end_position` are character offsets into the original text for `embed_text`, and input-array indexes for `embed_image`.
 
-### 画像 method の position 意味論
+### Improve Retrieval Quality (Optional)
 
-`embed_image` では position フィールドを「入力配列内のインデックス」に転用します（文字オフセットではありません）:
-
-| フィールド | 意味 |
-|---|---|
-| `begin_position` | 入力 `items` 配列の 0-based インデックス |
-| `end_position` | `begin_position + 1`（常に 1 件分） |
-| `content` | `label` があればそれ、なければ `file_path`、なければ `"image[#i]"` |
-
-`embed_text` では `begin_position` / `end_position` は **元テキストの文字数オフセット**（char index 単位）であり、`content == text.chars().skip(begin).take(end-begin).collect()` が成立します。
-
----
-
-## 3. 検索クエリ向け instruction prefix の付け方
-
-Qwen3-VL-Embedding は **Instruction Aware** です。本ランナーは `instruction` 専用フィールドを持たないため、検索品質を高めたい場合は呼び出し側で `text` に instruction prefix を直接含めてください:
+Qwen3-VL-Embedding is instruction-aware. For retrieval queries, prepend an instruction to `text` for better quality:
 
 ```text
 Instruct: Retrieve images or text relevant to the user's query.
 Query: a cat
 ```
 
-将来 fastembed-rs が instruction 専用 API を提供した時点で専用フィールドを追加します。
+## Notes and Limitations
 
----
+- **`file_path` input requires `allowed_image_dirs`** to prevent arbitrary local file reads. Allowed paths are checked by path component, not by raw string prefix.
+- **`url` input is not hardened against SSRF.** Use it only with input from trusted callers. Only `http` and `https` URLs are accepted.
+- Loading with `device = CUDA` from a CPU-only binary returns `UnsupportedDevice` instead of falling back to CPU.
+- Decoded bitmap size is checked before decoding to mitigate decompression-bomb style inputs.
 
-## 4. 出力は常に L2 正規化済み
-
-fastembed 5.13.4 の `Qwen3VLEmbedding` はソースレベルで `l2_normalize` を強制しています。本ランナーは逆正規化手段を提供しないため、**`values` は常に L2 正規化済み（ノルム ≈ 1）** です。Settings / Args に `normalize_embeddings` フィールドはありません。
-
----
-
-## 5. セキュリティと制限
-
-### `file_path` ソースには `allowed_image_dirs` が必須
-
-`EmbedImageArgs.items[].file_path` を使うには Settings の `allowed_image_dirs` に許可ディレクトリを登録する必要があります。**空配列（既定値）の場合 `file_path` ソースは一切受理しません。** これは任意ローカルファイル読み取りを防ぐためのガードです。
-
-許可判定は Settings load 時に canonical 化した `PathBuf` 配列に対する `Path::starts_with`（component-aware）で行います。文字列 prefix 一致ではないため、許可 `/tmp/allow` で `/tmp/allow_evil/x.png` を許可することはありません。`["/"]` を指定すると任意パスを許可しますが本番非推奨です。
-
-### 画像サイズ制限の 2 段構成
-
-| 設定 | 意味 |
-|---|---|
-| `image_size_limit_bytes` | 圧縮された入力バイト上限（既定 10 MiB）。入力受信時の早期 DoS ガード |
-| `max_decoded_image_bytes` | decode 後 bitmap サイズ上限。`image` crate の `into_dimensions()` で安価に preflight。未指定なら 256 MiB、`0` で無制限 |
-
-**`image_size_limit_bytes` だけでは「小さい圧縮画像が巨大 bitmap に展開される」zip bomb 類似攻撃を防げません。** decode 後サイズは `width * height * 4` を checked arithmetic で計算し、overflow 時は `InvalidArgument: decoded size overflow` を返します。
-
-### TOCTOU の保証範囲
-
-`file_path` は検証直後に `read_to_end` でメモリに読み込み、そのバイト列を embedding に使います。よって **embed 自体への TOCTOU は回避** されます。一方、`canonicalize` の時点とファイル open の時点の間で symlink を差し替えるレースは OS レベルの問題であり本ランナー単体では完全には防げません。許可ディレクトリは信頼可能なもののみに限定するのが利用側の責務です。
-
-### `url` ソース（http / https）
-
-`EmbedImageArgs.items[].url` は **http / https のみ**対応します。`file://` / `data:` / `ftp://` 等は、ネットワークアクセス前の scheme 検証で `InvalidArgument: url must use the http or https scheme` として拒否されます。
-
-取得時のガード:
-
-- リクエストタイムアウト 30 秒
-- リダイレクト上限 5 回
-- レスポンスの `Content-Length` が `image_size_limit_bytes` 超なら早期拒否
-- ボディは `image_size_limit_bytes + 1` バイトで打ち切り読み込み（`Content-Length` 詐称・欠落でも上限超過を検出）
-- 取得後は `data` ソースと同じ decode 後サイズ preflight に乗る
-
-**SSRF 対策は行いません。** プライベート IP / ループバック / リンクローカル / クラウドメタデータ（169.254.169.254 等）への到達をブロックしません。`url` ソースは**信頼できる呼び出し元からの入力にのみ**使用してください。任意ユーザ入力をそのまま渡すと内部ネットワークへのリクエストを誘発できます。SSRF を防ぐ責務は呼び出し側にあります。
-
----
-
-## 6. モデルロード
-
-`load()` は `Qwen3VLEmbedding::from_hf` で **HuggingFace Hub 経由のみ** モデルを取得します（v0.1 ではローカルパス直接ロード未対応）。重みをローカル保持したい場合は環境変数 `HF_HOME` で hf-hub のキャッシュ場所を制御してください。`HF_HOME` を設定するとモデル重みは `$HF_HOME/hub/models--<org>--<name>/` に配置されます（未設定時は既定値 `$HOME/.cache/huggingface/hub/`）。`HF_ENDPOINT` は**キャッシュ場所ではなくダウンロード先のベース URL（ミラー等）を変える変数**であり、設定してもキャッシュ配置は変わりません（配置は引き続き `HF_HOME` が決定します）。
-
-> **注**: upstream の fastembed 5.13.4 の `from_hf` は `HF_HOME` を無視し常に `$HOME/.cache/huggingface/hub` を使うバグがあります。本クレートは `[patch.crates-io]` で vendored fork（`modules/fastembed`）に差し替え、weights も `HF_HOME` を尊重するよう修正しています（後述の tokenizer.json と同じ `$HF_HOME/hub/` に集約）。
-
-char offset 計算用の tokenizer.json は fastembed とは別に hf-hub 経由で取得します（`tokenizer_model_id` 未指定時は `model_id` と同じものを使用）。weights と同じ `HF_HOME` キャッシュを共有します。
-
----
-
-## 7. ビルドと配布
+## Tests
 
 ```bash
-# CPU 版
-cargo build --release
+cargo test                              # unit tests; no network or GPU required
 
-# CUDA 版（別バイナリとして配布）
-cargo build --release --features cuda
-```
-
-CUDA 版は CPU 版と別の `.so` として配布し、`lib<name>_cuda.so` にリネームして `cuda_runner/` ディレクトリに配置します（既存 CLAUDE.md「CUDA Shared Library Dependency - Final Solution」を踏襲）。プラグイン名は CPU/CUDA で同一（`MultimodalEmbeddingRunner`）です。
-
-HTTP(S)（hf-hub からの tokenizer 取得、`url` 画像ソース）の TLS は **rustls**（純 Rust 実装）を使い、`native-tls` / OpenSSL は依存ツリーから完全に排除しています。生成される `.so` の `NEEDED` に `libssl` / `libcrypto` は含まれず、ホストの OpenSSL バージョンに依存せず任意の Linux ランタイムイメージで `dlopen()` 可能です（CPU 版は libstdc++ / libgcc / libm / libc / ld-linux のみ、CUDA 版はそれに CUDA ランタイムが加わる）。
-
-`device = CUDA` を CUDA feature 無効のバイナリでロードすると `UnsupportedDevice:` を返します。自動 CPU フォールバックは行いません。
-
----
-
-## 8. テスト
-
-| 階層 | 実行コマンド | モデル DL |
-|---|---|---|
-| unit | `cargo test` | 不要（`tests/fixtures/tokenizer.json` 同梱でネットワーク非依存）|
-| integration | `cargo test --test integration_tokenizer_hf --test integration_backend_load --test integration_embed_text --test integration_embed_image -- --ignored` | 要 |
-| expensive | `cargo test --test expensive_cross_modal -- --ignored` | 要 |
-
-`#[ignore]` 付きテストはネットワーク・GPU を必要とするため PR ごと CI では実行されません。
-
-integration / expensive テストの device は **ビルド時の feature から自動選択**されます:
-
-- `--features cuda` 付きビルド → CUDA
-- `--features metal` 付きビルド → Metal
-- feature なし（プレーンな `cargo test`）→ CPU（推論は非常に遅いが `UnsupportedDevice` で失敗しない）
-
-環境変数 `MM_TEST_DEVICE=cpu|cuda|metal` で明示指定すると最優先で尊重されます。指定した device の feature が無効なバイナリでは `UnsupportedDevice` になります（意図したシグナル）。
-
-```bash
-# CUDA（推奨。実用的な速度）
+# integration / expensive tests; require model download and effectively need a GPU, #[ignore]
 cargo test --features cuda --test integration_embed_text -- --ignored --test-threads=1
-
-# CPU（feature なし。動作確認用、非常に遅い）
-cargo test --test integration_embed_text -- --ignored --test-threads=1
-
-# device を明示（例: CUDA ビルドだが CPU で確認したい）
-MM_TEST_DEVICE=cpu cargo test --features cuda --test integration_embed_text -- --ignored --test-threads=1
 ```
 
-### VSCode の Run Test
+Integration-test devices are selected from build features (`--features cuda` -> CUDA, etc.). Override with `MM_TEST_DEVICE=cpu|cuda|metal`.
 
-rust-analyzer の Run Test CodeLens は既定で feature なしビルドのため CPU 実行になります。CUDA / Metal で実行したい場合、`.vscode/settings.json`（個人設定。`.gitignore` 済みで commit されません）に feature を設定します:
+## Distribution
 
-```jsonc
-// CUDA 環境
-{
-  "rust-analyzer.cargo.features": ["cuda"],
-  "rust-analyzer.check.features": ["cuda"]
-}
-```
+- CPU and CUDA builds are distributed as separate binaries with the same `.so` name and plugin name (CPU -> `runner/`, CUDA -> `cuda_runner/`).
+- TLS uses **rustls** and does not depend on OpenSSL (`libssl` / `libcrypto`). The generated `.so` can be loaded on Linux environments without depending on the host OpenSSL version.
 
-macOS では `["metal"]`、CPU のみの環境では `[]`（または設定なし）にします。feature 値はマシン依存のためリポジトリには commit せず、各自の環境に合わせてください。
+## License
 
----
+- Crate license: **MIT**
+- Backend licenses: fastembed-rs (Apache-2.0), candle (Apache-2.0 / MIT), Qwen3-VL-Embedding-2B weights (Apache 2.0)
 
-## 9. 依存運用
-
-本 crate は独立 git リポジトリです。`jobworkerp-client` / `command-utils` は本リポジトリの submodule（`modules/` 配下）を path 参照しています。clone 後にビルドする前に submodule を取得してください:
-
-```bash
-git clone <this-repo>
-cd mm-embedding-runner
-git submodule update --init --recursive
-cargo build --release
-```
-
-`Cargo.toml` の path は:
-
-```toml
-jobworkerp-client = { path = "modules/jobworkerp-client" }
-command-utils    = { path = "modules/command-utils" }
-```
-
-submodule の revision を更新したときは本 crate の `Cargo.lock` も同時更新してください。本 crate は独立ワークスペース（`Cargo.toml` 先頭の空 `[workspace]` テーブル）であり、独自の `Cargo.lock` を持ちます（再現性のため版管理対象）。
-
-CI/CD は本リポジトリ直下の `.github/workflows/`（`pull-request.yml` / `main-merge.yml`）で完結します。CUDA 対応ランナー前提で、PR では default / cuda 両構成のビルド・lint・unit テストを実行し、main merge 時に CPU 版（`runner/`）と CUDA 版（`cuda_runner/`、`libmm_embedding_runner_cuda.so`）を別 artifact として Release します。`#[ignore]` 付き integration / expensive テストはモデル DL・GPU を要するため PR ごとには実行しません。
-
----
-
-## 10. ライセンス
-
-- crate ライセンス: MIT
-- 同梱 `tests/fixtures/tokenizer.json`: Qwen3-VL-Embedding-2B モデルカード（Apache 2.0）に従い同梱
-- 依存ライセンス: fastembed-rs（Apache-2.0）、candle-core（Apache-2.0 / MIT）、Qwen3-VL-Embedding-2B 重み（Apache 2.0）
-
-モデル重みは配布物に含めず、初回実行時に HuggingFace Hub から取得します。
+For detailed design decisions and exhaustive field descriptions, see the comments in the `.proto` files and the repository documentation.
