@@ -1,10 +1,11 @@
 use mm_embedding_runner::protobuf::mm_embedding::{
     ChunkingConfig as ProtoChunkingConfig, DType as ProtoDType, Device as ProtoDevice,
-    MultimodalEmbeddingRunnerSettings,
+    MultimodalEmbeddingRunnerSettings, OnnxPooling as ProtoOnnxPooling,
 };
 use mm_embedding_runner::settings::{
-    DEFAULT_IMAGE_SIZE_LIMIT_BYTES, DEFAULT_MAX_DECODED_IMAGE_BYTES, DTypeKind,
-    DecodedImageBytesLimit, DeviceKind, MAX_SEQ_LEN_MAX, MAX_SEQ_LEN_MIN, validate,
+    DEFAULT_IMAGE_SIZE_LIMIT_BYTES, DEFAULT_MAX_DECODED_IMAGE_BYTES, DEFAULT_ONNX_MODEL_FILE,
+    DTypeKind, DecodedImageBytesLimit, DeviceKind, MAX_SEQ_LEN_MAX, MAX_SEQ_LEN_MIN,
+    OnnxPoolingKind, validate,
 };
 
 fn base_settings() -> MultimodalEmbeddingRunnerSettings {
@@ -19,6 +20,8 @@ fn base_settings() -> MultimodalEmbeddingRunnerSettings {
         allowed_image_dirs: vec![],
         tokenizer_model_id: None,
         chunking_config: None,
+        onnx_model_file: None,
+        onnx_pooling: ProtoOnnxPooling::Unspecified as i32,
     }
 }
 
@@ -37,6 +40,8 @@ fn default_settings_resolve_to_defaults() {
     assert_eq!(v.chunking_config.max_chunk_tokens, 2048);
     assert_eq!(v.chunking_config.min_chunk_tokens, 0);
     assert_eq!(v.tokenizer_model_id, v.model_id);
+    assert_eq!(v.onnx_model_file, DEFAULT_ONNX_MODEL_FILE);
+    assert_eq!(v.onnx_pooling, OnnxPoolingKind::Mean);
 }
 
 #[test]
@@ -201,4 +206,28 @@ fn whitespace_tokenizer_model_id_falls_back_to_model_id() {
     s.tokenizer_model_id = Some("   ".to_string());
     let v = validate(s).unwrap();
     assert_eq!(v.tokenizer_model_id, v.model_id);
+}
+
+#[test]
+fn explicit_onnx_model_file_is_trimmed() {
+    let mut s = base_settings();
+    s.onnx_model_file = Some(" onnx/model_int8.onnx ".to_string());
+    let v = validate(s).unwrap();
+    assert_eq!(v.onnx_model_file, "onnx/model_int8.onnx");
+}
+
+#[test]
+fn whitespace_onnx_model_file_falls_back_to_default() {
+    let mut s = base_settings();
+    s.onnx_model_file = Some("   ".to_string());
+    let v = validate(s).unwrap();
+    assert_eq!(v.onnx_model_file, DEFAULT_ONNX_MODEL_FILE);
+}
+
+#[test]
+fn explicit_onnx_cls_pooling_round_trips() {
+    let mut s = base_settings();
+    s.onnx_pooling = ProtoOnnxPooling::Cls as i32;
+    let v = validate(s).unwrap();
+    assert_eq!(v.onnx_pooling, OnnxPoolingKind::Cls);
 }

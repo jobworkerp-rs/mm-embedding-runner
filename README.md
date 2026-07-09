@@ -4,8 +4,8 @@ A multimodal embedding plugin that maps text and images into the **same vector s
 
 This runs as a V2 plugin (`.so` shared library) for [jobworkerp-rs](https://github.com/jobworkerp-rs/jobworkerp-rs). It is not a standalone server or CLI; load it from a jobworkerp host.
 
-- Backend: [`Qwen/Qwen3-VL-Embedding-2B`](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) (2048 dimensions, Apache 2.0), executed through [fastembed-rs](https://crates.io/crates/fastembed)
-- Inference devices: CPU / CUDA / Metal (candle backend)
+- Backend: Qwen3-VL, Qwen3 text-only, and ModernBERT ONNX through [fastembed-rs](https://crates.io/crates/fastembed)
+- Inference devices: CPU / CUDA / Metal for Qwen3 (candle backend); CPU / CUDA / CoreML for ModernBERT ONNX (`device = METAL`)
 
 ## Features
 
@@ -14,7 +14,7 @@ This runs as a V2 plugin (`.so` shared library) for [jobworkerp-rs](https://gith
 | `embed_text` | Text | Text embeddings, with automatic chunking for long input |
 | `embed_image` | Images (bytes / file paths / URLs) | Image embeddings |
 
-Both methods share the **same model instance** internally, so their output vectors can be compared directly. Outputs are always L2-normalized (norm ~= 1).
+Qwen3-VL uses one shared model instance for both methods, so text and image vectors can be compared directly. Qwen3 text-only and ModernBERT ONNX support `embed_text` only; `embed_image` returns `InvalidArgument`. Outputs are always L2-normalized (norm ~= 1).
 
 ## Protobuf Definitions
 
@@ -57,8 +57,39 @@ Settings are supplied once when the plugin is loaded. Main fields:
 | `max_sequence_length` | `2048` | Token limit (16 to 32768) |
 | `allowed_image_dirs` | `[]` | Directories allowed for `file_path` image inputs. If empty, all `file_path` inputs are rejected |
 | `image_size_limit_bytes` | 10 MiB | Compressed input size limit per image |
+| `onnx_model_file` | `onnx/model.onnx` | ONNX file for `ModernBertModel`, for example `onnx/model_int8.onnx` |
+| `onnx_pooling` | `ONNX_POOLING_MEAN` | ModernBERT ONNX pooling: `ONNX_POOLING_MEAN` or `ONNX_POOLING_CLS` |
 
 > Model weights are not included in the distribution. They are downloaded from HuggingFace Hub on first load. Set `HF_HOME` to control the cache location; otherwise the default is `$HOME/.cache/huggingface/hub/`.
+
+### ModernBERT ONNX
+
+Repositories whose `config.json` has `architectures[0] == "ModernBertModel"` are loaded as ONNX text embedding models. The repository must contain `config.json`, `tokenizer.json`, `special_tokens_map.json`, `tokenizer_config.json`, and the ONNX file named by `onnx_model_file`.
+
+Example:
+
+```json
+{
+  "model_id": "sirasagi62/ruri-v3-310m-ONNX",
+  "device": "CPU",
+  "max_sequence_length": 512,
+  "onnx_model_file": "onnx/model.onnx",
+  "onnx_pooling": "ONNX_POOLING_MEAN"
+}
+```
+
+ModernBERT ONNX defaults to mean pooling. Set `onnx_pooling` to `ONNX_POOLING_CLS` for exports that require CLS pooling. Model-specific query/passage prefixes, such as Ruri prefixes, must be included by the caller in `text`.
+
+For `model_info.dtype_used`, Qwen3 reports `F32`, `F16`, or `BF16`; ONNX reports labels inferred from the selected file name, such as `ONNX`, `INT8`, `F16`, `Q4`, or `BNB4`. ModernBERT ONNX `embedding_dimension` is the actual output length observed by a load-time probe inference.
+
+ONNX GPU execution uses separate features from the Qwen3 candle backend:
+
+```bash
+cargo build --release --features onnx-cuda    # device = CUDA via ONNX Runtime CUDA EP
+cargo build --release --features onnx-coreml  # device = METAL via ONNX Runtime CoreML EP
+```
+
+For ONNX, `device = METAL` maps to CoreML, not a Metal EP. If CoreML cannot accept the ONNX graph, loading fails.
 
 ### 4. Call Examples
 
@@ -120,6 +151,7 @@ cargo test                              # unit tests; no network or GPU required
 
 # integration / expensive tests; require model download and effectively need a GPU, #[ignore]
 cargo test --features cuda --test integration_embed_text -- --ignored --test-threads=1
+cargo test --test integration_modernbert_onnx -- --ignored --test-threads=1
 ```
 
 Integration-test devices are selected from build features (`--features cuda` -> CUDA, etc.). Override with `MM_TEST_DEVICE=cpu|cuda|metal`.

@@ -32,6 +32,8 @@ fn settings(
         allowed_image_dirs: dirs,
         tokenizer_model_id: None,
         chunking_config: None,
+        onnx_model_file: None,
+        onnx_pooling: Default::default(),
     };
     validate(s).unwrap()
 }

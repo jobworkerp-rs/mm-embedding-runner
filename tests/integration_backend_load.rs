@@ -10,7 +10,8 @@ mod common;
 use common::with_hf_home;
 use mm_embedding_runner::backend::MmBackend;
 use mm_embedding_runner::settings::{
-    DTypeKind, DecodedImageBytesLimit, DeviceKind, ResolvedChunkingConfig, ValidatedSettings,
+    DTypeKind, DecodedImageBytesLimit, DeviceKind, OnnxPoolingKind, ResolvedChunkingConfig,
+    ValidatedSettings,
 };
 
 fn default_settings() -> ValidatedSettings {
@@ -24,6 +25,8 @@ fn default_settings() -> ValidatedSettings {
         max_decoded_image_bytes: DecodedImageBytesLimit::Default,
         allowed_image_dirs: vec![],
         tokenizer_model_id: "Qwen/Qwen3-VL-Embedding-2B".to_string(),
+        onnx_model_file: "onnx/model.onnx".to_string(),
+        onnx_pooling: OnnxPoolingKind::Mean,
         chunking_config: ResolvedChunkingConfig {
             max_chunk_tokens: 2048,
             min_chunk_tokens: 0,

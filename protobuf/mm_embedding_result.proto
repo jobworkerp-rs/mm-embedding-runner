@@ -36,9 +36,12 @@ message ModelInfo {
   string model_name = 1;
   // Length of every values vector in the result.
   uint32 embedding_dimension = 2;
-  // Compute dtype used: "F32", "F16", or "BF16".
+  // Backend-reported dtype or quantization label. Qwen3 reports "F32",
+  // "F16", or "BF16"; ONNX reports labels derived from the selected model
+  // file such as "ONNX", "INT8", "F16", "Q4", or "BNB4".
   string dtype_used = 3;
-  // Always true: this runner supports image embedding.
+  // True only for multimodal models. Text-only backends such as Qwen3 text
+  // embedding and ModernBERT ONNX report false.
   bool supports_vision = 4;
   // Always false: audio embedding is not supported.
   bool supports_audio = 5;

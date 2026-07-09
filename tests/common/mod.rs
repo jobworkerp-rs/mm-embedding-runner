@@ -51,6 +51,8 @@ pub fn load_plugin_with_model(
         max_sequence_length: 512,
         device: test_device(),
         allowed_image_dirs,
+        onnx_model_file: None,
+        onnx_pooling: Default::default(),
         ..Default::default()
     };
     let rt = tokio::runtime::Builder::new_current_thread()
