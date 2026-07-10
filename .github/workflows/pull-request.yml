@@ -48,6 +48,11 @@ jobs:
         if: vars.BUILD_CONTAINER == ''
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
