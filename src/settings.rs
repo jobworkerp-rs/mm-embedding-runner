@@ -11,13 +11,14 @@ use std::path::PathBuf;
 use crate::error::{MmEmbeddingError, Result};
 use crate::protobuf::mm_embedding::{
     ChunkingConfig as ProtoChunkingConfig, DType as ProtoDType, Device as ProtoDevice,
-    MultimodalEmbeddingRunnerSettings,
+    MultimodalEmbeddingRunnerSettings, OnnxPooling as ProtoOnnxPooling,
 };
 
 pub const MAX_SEQ_LEN_MIN: u32 = 16;
 pub const MAX_SEQ_LEN_MAX: u32 = 32_768;
 pub const DEFAULT_IMAGE_SIZE_LIMIT_BYTES: u64 = 10 * 1024 * 1024;
 pub const DEFAULT_MAX_DECODED_IMAGE_BYTES: u64 = 256 * 1024 * 1024;
+pub const DEFAULT_ONNX_MODEL_FILE: &str = "onnx/model.onnx";
 
 /// Tri-state representation of the `max_decoded_image_bytes` setting:
 /// - `Default` = field unset on the wire => apply 256 MiB cap
@@ -62,6 +63,12 @@ pub enum DTypeKind {
     Bf16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnnxPoolingKind {
+    Mean,
+    Cls,
+}
+
 #[derive(Debug, Clone)]
 pub struct ValidatedSettings {
     pub model_id: String,
@@ -74,6 +81,8 @@ pub struct ValidatedSettings {
     /// Canonicalized whitelist of directories for the file_path image source.
     pub allowed_image_dirs: Vec<PathBuf>,
     pub tokenizer_model_id: String,
+    pub onnx_model_file: String,
+    pub onnx_pooling: OnnxPoolingKind,
     pub chunking_config: ResolvedChunkingConfig,
 }
 
@@ -134,6 +143,20 @@ pub fn validate(settings: MultimodalEmbeddingRunnerSettings) -> Result<Validated
         .filter(|s| !s.is_empty())
         .map_or_else(|| model_id.clone(), str::to_owned);
 
+    let onnx_model_file = settings
+        .onnx_model_file
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map_or_else(|| DEFAULT_ONNX_MODEL_FILE.to_string(), str::to_owned);
+
+    let onnx_pooling = match ProtoOnnxPooling::try_from(settings.onnx_pooling)
+        .unwrap_or(ProtoOnnxPooling::Unspecified)
+    {
+        ProtoOnnxPooling::Cls => OnnxPoolingKind::Cls,
+        ProtoOnnxPooling::Mean | ProtoOnnxPooling::Unspecified => OnnxPoolingKind::Mean,
+    };
+
     let gpu_device_index = settings.gpu_device_index.unwrap_or(0);
 
     Ok(ValidatedSettings {
@@ -146,6 +169,8 @@ pub fn validate(settings: MultimodalEmbeddingRunnerSettings) -> Result<Validated
         max_decoded_image_bytes,
         allowed_image_dirs,
         tokenizer_model_id,
+        onnx_model_file,
+        onnx_pooling,
         chunking_config,
     })
 }

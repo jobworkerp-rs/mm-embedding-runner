@@ -1,6 +1,6 @@
 use mm_embedding_runner::protobuf::mm_embedding::{
     ChunkingConfig, DType, Device, EmbedImageArgs, EmbedTextArgs, ImageItem, MmEmbeddingResult,
-    ModelInfo, MultimodalEmbeddingRunnerSettings, image_item::Source as ImageSource,
+    ModelInfo, MultimodalEmbeddingRunnerSettings, OnnxPooling, image_item::Source as ImageSource,
     mm_embedding_result::Embedding,
 };
 use prost::Message;
@@ -21,6 +21,8 @@ fn settings_roundtrip() {
             max_chunk_tokens: Some(2048),
             min_chunk_tokens: Some(0),
         }),
+        onnx_model_file: Some("onnx/model_int8.onnx".to_string()),
+        onnx_pooling: OnnxPooling::Cls as i32,
     };
     let bytes = original.encode_to_vec();
     let decoded = MultimodalEmbeddingRunnerSettings::decode(&bytes[..]).unwrap();

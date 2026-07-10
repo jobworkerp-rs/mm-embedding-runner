@@ -41,6 +41,14 @@ message MultimodalEmbeddingRunnerSettings {
   // are derived from max_sequence_length: max_chunk_tokens =
   // max_sequence_length and min_chunk_tokens = 0.
   optional ChunkingConfig chunking_config = 10;
+
+  // ONNX model file inside the HuggingFace repository for ModernBertModel
+  // checkpoints. Defaults to "onnx/model.onnx" when unset or blank.
+  optional string onnx_model_file = 11;
+
+  // Pooling strategy used for ModernBertModel ONNX checkpoints. Unset means
+  // MEAN, matching common sentence-transformers ModernBERT exports.
+  OnnxPooling onnx_pooling = 12;
 }
 
 enum Device {
@@ -55,6 +63,12 @@ enum DType {
   F32 = 1;
   F16 = 2;
   BF16 = 3;
+}
+
+enum OnnxPooling {
+  ONNX_POOLING_UNSPECIFIED = 0;
+  ONNX_POOLING_MEAN = 1;
+  ONNX_POOLING_CLS = 2;
 }
 
 // Hierarchical chunking parameters for the embed_text method.

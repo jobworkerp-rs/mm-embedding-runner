@@ -41,22 +41,27 @@ jobworkerp-plugin-abi = { git = "https://github.com/jobworkerp-rs/jobworkerp-rs.
 # rustls equivalents so neither the ONNX Runtime download nor hf-hub links
 # the host's libssl. image-models is re-added because the default set
 # included it (qwen3 already pulls `image`, but keep it explicit).
-fastembed = { version = "=5.13.4", default-features = false, features = [
+fastembed = { version = "=5.17.2", default-features = false, features = [
     "qwen3",
     "image-models",
     "hf-hub-rustls-tls",
     "ort-download-binaries-rustls-tls",
 ] }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "ndarray",
+    "std",
+    "api-24",
+] }
 # Match fastembed's pinned candle-core to avoid duplicate compilation; feature
 # selection (cuda/metal) propagates from fastembed/* features.
 candle-core = "=0.10.2"
 
-# Vendored fork of fastembed 5.13.4. The upstream Qwen3*Embedding::from_hf
+# Vendored fork of fastembed 5.17.2. The upstream Qwen3*Embedding::from_hf
 # builds its hf-hub Api with ApiBuilder::new(), pinning the cache to
 # $HOME/.cache/huggingface/hub and ignoring HF_HOME/HF_ENDPOINT. The fork
 # switches to ApiBuilder::from_env() so model weights honor HF_HOME the same
 # way our separately-fetched tokenizer.json already does. The fork keeps
-# version = "5.13.4" so the "=5.13.4" requirement above still resolves, and
+# version = "5.17.2" so the "=5.17.2" requirement above still resolves, and
 # retains the rustls feature set so the libssl-free distribution constraint
 # holds. See modules/fastembed (git submodule).
 
@@ -99,11 +104,13 @@ default = []
 # propagates to candle-core/candle-nn.
 cuda  = ["fastembed/cuda"]
 metal = ["fastembed/metal"]
+onnx-cuda = ["ort/cuda"]
+onnx-coreml = ["ort/coreml"]
 
 [dev-dependencies]
 tempfile = "3"
 
-# Redirect the fastembed 5.13.4 source to the vendored fork submodule. Only
+# Redirect the fastembed 5.17.2 source to the vendored fork submodule. Only
 # the source is swapped; the version pin and feature selection on the
 # dependency above continue to apply. See the comment near the fastembed
 # dependency for rationale.

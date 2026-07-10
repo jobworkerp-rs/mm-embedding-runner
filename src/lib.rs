@@ -470,15 +470,10 @@ fn embed_image_impl(
 }
 
 fn build_model_info(backend: &MmBackend) -> protobuf::mm_embedding::ModelInfo {
-    let dtype_used = match backend.settings().dtype {
-        settings::DTypeKind::F32 => "F32",
-        settings::DTypeKind::F16 => "F16",
-        settings::DTypeKind::Bf16 => "BF16",
-    };
     protobuf::mm_embedding::ModelInfo {
         model_name: backend.settings().model_id.clone(),
         embedding_dimension: backend.embedding_dimension() as u32,
-        dtype_used: dtype_used.to_string(),
+        dtype_used: backend.dtype_used().to_string(),
         supports_vision: backend.supports_vision(),
         supports_audio: false,
         audio_sample_rate: None,
