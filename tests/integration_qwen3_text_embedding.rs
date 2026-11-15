@@ -1,6 +1,10 @@
 //! End-to-end check of the text-only architecture path (Qwen3-Embedding-*
-//! family, `architectures[0] == "Qwen3ForCausalLM"`). See
-//! ai-docs/specification.md §2.3 for the binding contract.
+//! family, `architectures[0] == "Qwen3ForCausalLM"`). A text-only model is
+//! served through the same plugin contract as Qwen3-VL: `embed_text` works
+//! with the usual chunking and position metadata, the model reports
+//! `supports_vision == false`, and `embed_image` is rejected with
+//! `InvalidArgument:` since there is no image path to share a vector space
+//! with.
 
 mod common;
 
@@ -45,8 +49,8 @@ fn short_text_returns_single_embedding_at_model_dim() {
     assert_eq!(emb.begin_position, 0);
     assert_eq!(emb.end_position as usize, text.chars().count());
     assert_eq!(emb.content, text);
-    // Spec §2.3: dimension must come from the actual checkpoint's
-    // hidden_size, not a hard-coded VL constant.
+    // The dimension must come from the actual checkpoint's hidden_size, not
+    // a hard-coded VL constant.
     assert_eq!(emb.values.len(), TEXT_ONLY_EXPECTED_DIM as usize);
     assert_unit_norm(&emb.values);
 }

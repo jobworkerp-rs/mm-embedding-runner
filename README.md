@@ -34,13 +34,17 @@ The `.proto` files under `protobuf/` are the authoritative definitions for plugi
 This repository uses git submodules, so fetch them after cloning.
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/jobworkerp-rs/mm-embedding-runner.git
 cd mm-embedding-runner
 git submodule update --init --recursive
 
 cargo build --release                  # CPU build -> target/release/libmm_embedding_runner.so
 cargo build --release --features cuda   # CUDA build (separate binary)
 ```
+
+candle's CPU vector kernels follow rustc's target CPU, and the default `x86_64` target has no AVX. For faster CPU inference build with an explicit CPU level, for example `RUSTFLAGS=-Ctarget-cpu=x86-64-v3` (the level of the released binaries) or `-Ctarget-cpu=native` for the build machine only.
+
+Prebuilt binaries are also available (see [Distribution](#distribution)).
 
 ### 2. Register with jobworkerp
 
@@ -158,7 +162,15 @@ Integration-test devices are selected from build features (`--features cuda` -> 
 
 ## Distribution
 
-- CPU and CUDA builds are distributed as separate binaries with the same `.so` name and plugin name (CPU -> `runner/`, CUDA -> `cuda_runner/`).
+- Prebuilt plugins are attached to the [GitHub Releases](https://github.com/jobworkerp-rs/mm-embedding-runner/releases) with `SHA256SUMS` and build provenance attestations. Decompress with `xz -d` before placing them in the plugin directory.
+
+  | Asset | Requirements |
+  |---|---|
+  | `mm_embedding_runner-x86_64_v3-linux.so.xz` | x86-64-v3 CPU (AVX2 / FMA / F16C / BMI2, Haswell or newer), glibc 2.39 and libstdc++ GLIBCXX 3.4.33 or newer (Ubuntu 24.04 / Debian 13 or newer) |
+  | `mm_embedding_runner_cuda-x86_64_v3-linux-cuda12.8-cc89.so.xz` | The CPU build's requirements, plus an NVIDIA GPU with compute capability 8.9 or newer, driver R570 or newer, and the CUDA 12 runtime libraries (`libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`, `libcurand.so.10`, `libnvrtc.so.12`). The kernels ship as PTX and are JIT-compiled by the driver on first load |
+  | `mm_embedding_runner_metal-aarch64-darwin.dylib.xz` | Apple Silicon, macOS 14 or newer. The library is only ad-hoc signed; if macOS refuses to load a browser download, fetch it with `curl` or remove the attribute with `xattr -d com.apple.quarantine` |
+- The CPU and CUDA builds share the plugin name, so deploy only one of them per host (for example CPU -> `runner/`, CUDA -> `cuda_runner/`).
+- ModernBERT ONNX runs on the ONNX Runtime CPU execution provider in the prebuilt binaries; `onnx-cuda` / `onnx-coreml` require a source build.
 - TLS uses **rustls** and does not depend on OpenSSL (`libssl` / `libcrypto`). The generated `.so` can be loaded on Linux environments without depending on the host OpenSSL version.
 
 ## License

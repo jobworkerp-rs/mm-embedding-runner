@@ -34,13 +34,17 @@ plugin の設定・各 method の引数・出力は `protobuf/` 配下の `.prot
 このリポジトリは git submodule を使うため、clone 後に必ず取得してください。
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/jobworkerp-rs/mm-embedding-runner.git
 cd mm-embedding-runner
 git submodule update --init --recursive
 
 cargo build --release                  # CPU 版 → target/release/libmm_embedding_runner.so
 cargo build --release --features cuda   # CUDA 版（別バイナリ）
 ```
+
+candle の CPU 向けベクトル演算は rustc の target CPU に従い、既定の `x86_64` ターゲットでは AVX を使いません。CPU 推論を速くするには、`RUSTFLAGS=-Ctarget-cpu=x86-64-v3`（配布バイナリと同じ水準）や、ビルドしたマシン専用の `-Ctarget-cpu=native` を指定してビルドしてください。
+
+ビルド済みバイナリもあります（[配布について](#配布について) を参照）。
 
 ### 2. jobworkerp に登録
 
@@ -158,7 +162,15 @@ integration テストの推論デバイスはビルド時の feature から自�
 
 ## 配布について
 
-- CPU 版と CUDA 版は同じ `.so` 名・同じプラグイン名で別バイナリとして配布します（CPU 版 → `runner/`、CUDA 版 → `cuda_runner/`）。
+- ビルド済みのプラグインを、`SHA256SUMS` とビルドの provenance attestation とともに [GitHub Releases](https://github.com/jobworkerp-rs/mm-embedding-runner/releases) に添付しています。`xz -d` で展開してからプラグインディレクトリに配置してください。
+
+  | 成果物 | 動作要件 |
+  |---|---|
+  | `mm_embedding_runner-x86_64_v3-linux.so.xz` | x86-64-v3 の CPU（AVX2 / FMA / F16C / BMI2、Haswell 以降）、glibc 2.39 / libstdc++（GLIBCXX 3.4.33）以上（Ubuntu 24.04 / Debian 13 以降） |
+  | `mm_embedding_runner_cuda-x86_64_v3-linux-cuda12.8-cc89.so.xz` | CPU 版の要件に加え、compute capability 8.9 以上の NVIDIA GPU、ドライバ R570 以上、CUDA 12 のランタイムライブラリ（`libcudart.so.12` / `libcublas.so.12` / `libcublasLt.so.12` / `libcurand.so.10` / `libnvrtc.so.12`）。カーネルは PTX で同梱され、初回のロード時にドライバが JIT コンパイルします |
+  | `mm_embedding_runner_metal-aarch64-darwin.dylib.xz` | Apple Silicon、macOS 14 以降。ad-hoc 署名のみのため、ブラウザで取得したファイルは読み込みを拒否されることがあります（`curl` で取得するか、`xattr -d com.apple.quarantine` で属性を外してください） |
+- CPU 版と CUDA 版はプラグイン名が同じなので、1 つのホストにはどちらか一方だけを配置します（例: CPU 版 → `runner/`、CUDA 版 → `cuda_runner/`）。
+- 配布バイナリでは、ModernBERT ONNX は ONNX Runtime の CPU 実行で動きます。`onnx-cuda` / `onnx-coreml` を使う場合はソースからビルドしてください。
 - TLS には **rustls** を使用し、OpenSSL（`libssl` / `libcrypto`）には依存しません。生成される `.so` はホストの OpenSSL バージョンに依存せず任意の Linux 環境で `dlopen` できます。
 
 ## ライセンス

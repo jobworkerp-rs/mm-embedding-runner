@@ -3,13 +3,17 @@
 # fastembed/candle-core dependency tree independent.
 [workspace]
 
+# Release tags (vX.Y.Z) must match this version.
+[workspace.package]
+version = "0.1.0"
+
 [package]
 name = "mm-embedding-runner"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 authors = ["sutr"]
 description = "Multimodal embedding plugin (text + image) backed by fastembed-rs Qwen3-VL-Embedding"
-repository = "https://github.com/jobworkerp-rs/llama-plugins"
+repository = "https://github.com/jobworkerp-rs/mm-embedding-runner"
 license = "MIT"
 
 # v2 plugin uses dylib: the proc-macro-generated #[repr(C)] vtable thunks
