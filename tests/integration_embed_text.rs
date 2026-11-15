@@ -1,6 +1,6 @@
 //! End-to-end check of the `embed_text` method path. Loads the real model
 //! (via the same hf-hub cache as the backend integration tests) and verifies
-//! the spec contract: char-indexed positions, L2-normalized vectors, and
+//! the result contract: char-indexed positions, L2-normalized vectors, and
 //! sane chunking behavior for long inputs.
 
 mod common;

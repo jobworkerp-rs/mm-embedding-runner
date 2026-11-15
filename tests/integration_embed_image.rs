@@ -1,6 +1,7 @@
 //! End-to-end check of the `embed_image` method path. Mirrors
 //! `integration_embed_text.rs` in shape: share a single loaded plugin
-//! across tests, verify spec contract on the result protobuf.
+//! across tests, and verify the result protobuf contract: one embedding per
+//! input image in submission order, with the input index as position.
 
 mod common;
 

@@ -1,6 +1,6 @@
-//! Cross-modal alignment check. The spec asks for a real cat image, but
-//! sourcing one with a redistributable license is out of scope for the
-//! integration suite. We use the synthetic `tiny_valid.png` fixture and
+//! Cross-modal alignment check. The ideal check compares a real cat image
+//! with "a cat" / "a car", but sourcing such an image with a redistributable
+//! license is out of scope for the integration suite. We use the synthetic `tiny_valid.png` fixture and
 //! settle for the looser invariant that the two modalities produce vectors
 //! of matching dimension and well-defined cosine similarity, while we wait
 //! for a real fixture to be added later.

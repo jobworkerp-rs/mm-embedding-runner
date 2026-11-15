@@ -1,7 +1,7 @@
 name: Release
 
-# Maintained in the private gitea source and published to this repository by
-# its release sync together with the rest of .github/; edit it there, not here.
+# Maintained in a private source repository and published here by its release
+# sync together with the rest of .github/; changes made here are overwritten.
 # The release sync pushes a vMAJOR.MINOR.PATCH tag, which builds the plugin
 # for every supported platform and attaches the binaries, SHA256SUMS and
 # build provenance attestations to the GitHub Release for the tag.
@@ -9,8 +9,8 @@ name: Release
 # Self-hosted runners are shared with other public repositories, so only a
 # tag push (which needs write access) may start this workflow, the build jobs
 # get a read-only token, and every job is limited to GitHub so that the
-# private source, which tracks this file, never runs it. The private source
-# checks these rules on every change.
+# source repository, which tracks this file, never runs it. These rules are
+# checked on every change before publishing.
 on:
   push:
     tags:
@@ -63,13 +63,13 @@ jobs:
             lib_ext: so
             asset_suffix: -x86_64_v3-linux
             extra_env: MAX_GLIBC=2.39 MAX_GLIBCXX=3.4.33 RUSTFLAGS=-Ctarget-cpu=x86-64-v3
-          # The k8s runner image is Ubuntu 24.04 with CUDA 12.8. candle kernels
-          # are embedded as compute_89 PTX, which the driver JIT-compiles on
-          # Ada (sm_89) and newer GPUs. CUDARC_CUDA_VERSION pins the CUDA API
-          # cudarc binds to, so an image update with a newer toolkit cannot
-          # silently change the binary. cudarc links the CUDA libraries
-          # dynamically; libcuda.so.1 among them proves the CUDA backend is in
-          # the binary.
+          # The self-hosted CUDA runner is Ubuntu 24.04 with CUDA 12.8. candle
+          # kernels are embedded as compute_89 PTX, which the driver
+          # JIT-compiles on Ada (sm_89) and newer GPUs. CUDARC_CUDA_VERSION pins
+          # the CUDA API cudarc binds to, so an image update with a newer
+          # toolkit cannot silently change the binary. cudarc links the CUDA
+          # libraries dynamically; libcuda.so.1 among them proves the CUDA
+          # backend is in the binary.
           - name: linux-x86_64-cuda
             runs_on: lookback-linux-cuda
             features: cuda
@@ -77,10 +77,8 @@ jobs:
             lib_ext: so
             asset_suffix: _cuda-x86_64_v3-linux-cuda12.8-cc89
             extra_env: MAX_GLIBC=2.39 MAX_GLIBCXX=3.4.33 RUSTFLAGS=-Ctarget-cpu=x86-64-v3 CUDA_COMPUTE_CAP=89 CUDARC_CUDA_VERSION=12080 REQUIRED_NEEDED=libcuda.so.1
-          # GitHub-hosted Apple Silicon: the self-hosted macOS runner of the
-          # organization is dedicated to another repository. onnx-coreml is
-          # left out until the CoreML execution provider of the prebuilt ONNX
-          # Runtime is verified.
+          # GitHub-hosted Apple Silicon. onnx-coreml is left out until the
+          # CoreML execution provider of the prebuilt ONNX Runtime is verified.
           - name: darwin-arm64-metal
             runs_on: macos-15
             features: metal
@@ -142,8 +140,8 @@ jobs:
           done
           cargo build --release --locked --lib "${packages[@]}" ${FEATURES:+--features "${FEATURES}"}
 
-      # Compressed in the publish job: neither macOS nor the k8s runner image
-      # is guaranteed to ship xz.
+      # Compressed in the publish job: neither macOS nor the self-hosted
+      # runner image is guaranteed to ship xz.
       - name: Verify and stage plugins under their release names
         env:
           PLATFORM: ${{ matrix.platform }}

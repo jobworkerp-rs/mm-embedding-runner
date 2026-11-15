@@ -5,7 +5,7 @@
 
 # Release tags (vX.Y.Z) must match this version.
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 
 [package]
 name = "mm-embedding-runner"
